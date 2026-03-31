@@ -71,6 +71,8 @@ brew install Arthur-Ficial/tap/apfel
 
 Details: [brew-install.md](./brew-install.md)
 
+Maintainer note: the GitHub Actions `Publish Release` workflow reuses the existing `make` versioning/build flow and now owns the Homebrew tap update too. Every automated release publishes the tarball and rewrites the tap formula from the same version and SHA.
+
 That's it. `make install` does everything:
 1. Auto-bumps the version number
 2. Builds a release binary
@@ -190,6 +192,29 @@ apfel --gui
 ```
 
 Inspect every request/response, copy curl commands, view SSE streams, track token budgets.
+
+## Release Automation
+
+Homebrew tap updates are part of the release pipeline now. Use the GitHub Actions `Publish Release` workflow instead of hand-editing `Arthur-Ficial/homebrew-tap`.
+
+What it does:
+1. Bumps the version (`patch`, `minor`, or `major`)
+2. Reuses the existing `make build` / `make release-minor` / `make release-major` targets
+3. Builds the release binary on `macos-26`
+4. Commits the release files and pushes the tag
+5. Publishes the GitHub release tarball
+6. Rewrites and pushes `Formula/apfel.rb` in `Arthur-Ficial/homebrew-tap`
+
+One-time maintainer setup:
+1. Create a fine-grained GitHub token with `Contents: Read and write` access to `Arthur-Ficial/homebrew-tap`
+2. Save it in this repo as the `HOMEBREW_TAP_PUSH_TOKEN` GitHub Actions secret
+
+Release from GitHub:
+1. Open `Actions`
+2. Run `Publish Release`
+3. Choose `patch`, `minor`, or `major`
+
+Local `make build` and `make install` still handle the normal auto-version bump and local release build. The tap is updated by the publish workflow when a release is actually published.
 
 ## Demos
 

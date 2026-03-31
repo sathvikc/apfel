@@ -2,7 +2,7 @@ PREFIX ?= /usr/local
 BINARY = apfel
 VERSION_FILE = .version
 
-.PHONY: check-toolchain build install uninstall clean bump-patch bump-minor bump-major generate-build-info update-readme version release-minor release-major
+.PHONY: check-toolchain build install uninstall clean bump-patch bump-minor bump-major generate-build-info update-readme version release-minor release-major package-release-asset print-release-asset print-release-sha256 update-homebrew-formula
 
 # --- Environment checks ---
 
@@ -130,3 +130,40 @@ uninstall:
 
 clean:
 	swift package clean
+
+package-release-asset:
+	@v=$$(cat $(VERSION_FILE)); \
+	asset="apfel-$$v-arm64-macos.tar.gz"; \
+	if [ ! -x ".build/release/$(BINARY)" ]; then \
+		echo "error: missing .build/release/$(BINARY). Build a release binary first."; \
+		exit 1; \
+	fi; \
+	tar -C .build/release -czf "$$asset" $(BINARY); \
+	echo "$$asset"
+
+print-release-asset:
+	@v=$$(cat $(VERSION_FILE)); \
+	echo "apfel-$$v-arm64-macos.tar.gz"
+
+print-release-sha256:
+	@v=$$(cat $(VERSION_FILE)); \
+	asset="apfel-$$v-arm64-macos.tar.gz"; \
+	if [ ! -f "$$asset" ]; then \
+		echo "error: missing $$asset. Run make package-release-asset first."; \
+		exit 1; \
+	fi; \
+	shasum -a 256 "$$asset" | awk '{print $$1}'
+
+update-homebrew-formula:
+	@if [ -z "$(HOMEBREW_FORMULA_OUTPUT)" ]; then \
+		echo "error: set HOMEBREW_FORMULA_OUTPUT=/path/to/Formula/apfel.rb"; \
+		exit 1; \
+	fi
+	@if [ -z "$(HOMEBREW_FORMULA_SHA256)" ]; then \
+		echo "error: set HOMEBREW_FORMULA_SHA256=<sha256>"; \
+		exit 1; \
+	fi
+	@./scripts/write-homebrew-formula.sh \
+		--version "$$(cat $(VERSION_FILE))" \
+		--sha256 "$(HOMEBREW_FORMULA_SHA256)" \
+		--output "$(HOMEBREW_FORMULA_OUTPUT)"

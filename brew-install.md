@@ -39,40 +39,31 @@ brew --prefix
 
 ## Maintainer Release Flow
 
-1. Keep `.version` at the intended release version.
-2. Refresh `Sources/BuildInfo.swift` without bumping the version:
+Releases are automated from this repo. Do not hand-edit `Arthur-Ficial/homebrew-tap` for normal releases.
 
-```bash
-make generate-build-info
-```
+One-time setup in `Arthur-Ficial/apfel`:
 
-3. Build the release binary:
+1. Create a fine-grained GitHub token with `Contents: Read and write` access to `Arthur-Ficial/homebrew-tap`
+2. Store it as the `HOMEBREW_TAP_PUSH_TOKEN` GitHub Actions secret
 
-```bash
-swift build -c release
-```
+Release steps:
 
-4. Package the binary asset:
+1. Open the `Publish Release` GitHub Actions workflow
+2. Choose `patch`, `minor`, or `major`
+3. Run the workflow
 
-```bash
-tar -C .build/release -czf apfel-$(cat .version)-arm64-macos.tar.gz apfel
-shasum -a 256 apfel-$(cat .version)-arm64-macos.tar.gz
-```
+The workflow will:
 
-5. Tag and publish the release:
+1. Bump `.version`
+2. Regenerate `Sources/BuildInfo.swift`
+3. Update the version badge in `README.md`
+4. Do that through the existing `Makefile` release targets
+5. Build the release binary on `macos-26`
+6. Commit the release files and push the Git tag
+7. Publish `apfel-<version>-arm64-macos.tar.gz` on GitHub Releases
+8. Rewrite and push `Formula/apfel.rb` in `Arthur-Ficial/homebrew-tap`
 
-```bash
-git tag v$(cat .version)
-git push origin v$(cat .version)
-gh release create v$(cat .version) apfel-$(cat .version)-arm64-macos.tar.gz --title "v$(cat .version)" --notes "Homebrew release"
-```
-
-6. Update `Arthur-Ficial/homebrew-tap`:
-   - set the new `url`
-   - set the new `sha256`
-   - commit and push
-
-7. Validate:
+Validation after the workflow completes:
 
 ```bash
 brew update
