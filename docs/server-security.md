@@ -2,19 +2,6 @@
 
 apfel's HTTP server (`--serve`) runs on localhost by default and is designed for local development and on-device inference. This document explains the security settings, their reasoning, and how to configure them for your specific use case.
 
-## Why origin checking?
-
-Any website you visit can make HTTP requests to `localhost` via JavaScript. This is called **localhost CSRF** (Cross-Site Request Forgery) - a well-known attack class that has already affected:
-
-- **Ollama** - same port (11434), CSRF via `fetch()`, no auth. [Writeup](https://blog.jaisal.dev/articles/oh-llama)
-- **Jupyter** - added token auth after CSRF CVEs. [Security release](https://blog.jupyter.org/security-release-jupyter-notebook-4-3-1-808e1f3bb5e2)
-- **175,000+ exposed Ollama instances** found by Shodan. [Cisco](https://blogs.cisco.com/security/detecting-exposed-llm-servers-shodan-case-study-on-ollama)
-- **0.0.0.0 Day** - browsers block `0.0.0.0` -> localhost, but Origin-based CSRF still works on `127.0.0.1`. [Oligo disclosure](https://www.oligo.security/blog/0-0-0-0-day-exploiting-localhost-apis-from-the-browser)
-
-Without protection, a malicious website could silently use your Apple Intelligence model for compute abuse or exfiltrate responses.
-
----
-
 ## How it works
 
 The `Origin` HTTP header is the key. Browsers automatically attach it to cross-origin requests. Non-browser tools (curl, Python SDK, shell scripts) don't.
@@ -499,26 +486,3 @@ Every combination explained:
 - "Who can read responses" = whose browser JavaScript can read the response body (requires CORS headers)
 - "simple GET only" = browsers can read GET responses but POST requires full CORS preflight (`--cors`)
 
----
-
-## Severity assessment
-
-**Low.** Apple's on-device model cannot access the filesystem, network, or any system resources. The worst case from a localhost CSRF attack is:
-
-- **Compute abuse** - a website could use your GPU/NPU for inference
-- **Response exfiltration** - with CORS, a website could read model responses
-
-Still worth fixing - it's the right default, and it's what every other localhost LLM server has had to learn the hard way.
-
----
-
-## Prior art
-
-| Project | What happened | Fix |
-|---------|--------------|-----|
-| [Ollama](https://blog.jaisal.dev/articles/oh-llama) | Same port 11434, CSRF via `fetch()`, no auth | Added origin check |
-| [Jupyter](https://blog.jupyter.org/security-release-jupyter-notebook-4-3-1-808e1f3bb5e2) | CSRF CVEs | Added token auth |
-| [0.0.0.0 Day](https://www.oligo.security/blog/0-0-0-0-day-exploiting-localhost-apis-from-the-browser) | Browsers block 0.0.0.0 but not 127.0.0.1 | Industry-wide awareness |
-| [175k+ Ollama instances](https://blogs.cisco.com/security/detecting-exposed-llm-servers-shodan-case-study-on-ollama) | Exposed on public internet | Don't bind 0.0.0.0 without auth |
-
-This issue was originally reported via [Hacker News discussion](https://news.ycombinator.com/item?id=47625563).
