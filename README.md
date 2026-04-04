@@ -1,6 +1,6 @@
 # apfel
 
-[![Version 0.7.2](https://img.shields.io/badge/version-0.7.2-blue)](https://github.com/Arthur-Ficial/apfel)
+[![Version 0.7.5](https://img.shields.io/badge/version-0.7.5-blue)](https://github.com/Arthur-Ficial/apfel)
 [![Swift 6.3+](https://img.shields.io/badge/Swift-6.3%2B-F05138?logo=swift&logoColor=white)](https://swift.org)
 [![macOS 26+](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](https://developer.apple.com/macos/)
 [![No Xcode Required](https://img.shields.io/badge/Xcode-not%20required-orange)](https://developer.apple.com/xcode/resources/)
@@ -183,8 +183,8 @@ apfel --mcp ./mcp/calculator/server.py "What is 15 times 27?"
 # tool: multiply({"a": 15, "b": 27}) = 405
 # 15 times 27 is 405.
 
-# Multiple MCP servers
-apfel --mcp ./calc.py --mcp ./weather.py "What is sqrt(2025)?"
+# Multiple MCP servers (bring your own)
+apfel --mcp ./server_a.py --mcp ./server_b.py "Use both tools"
 
 # Server mode - tools auto-available to all clients
 apfel --serve --mcp ./mcp/calculator/server.py

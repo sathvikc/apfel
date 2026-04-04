@@ -18,9 +18,9 @@ struct ChatRequestTrace: Sendable {
     let events: [String]
 }
 
-private func loggedBody(_ value: String) -> String? {
-    guard serverState.config.debug else { return nil }
-    return truncateForLog(value)
+func capturedRequestBody(_ body: ByteBuffer, debugEnabled: Bool) -> String? {
+    guard debugEnabled else { return nil }
+    return body.getString(at: body.readerIndex, length: body.readableBytes) ?? ""
 }
 
 // MARK: - /v1/chat/completions
@@ -31,7 +31,7 @@ func handleChatCompletion(_ request: Request, context: some RequestContext) asyn
 
     // Decode request body
     let body = try await request.body.collect(upTo: 1024 * 1024)
-    let requestBodyString = body.getString(at: body.readerIndex, length: body.readableBytes) ?? ""
+    let requestBodyString = capturedRequestBody(body, debugEnabled: serverState.config.debug)
     events.append("request bytes=\(body.readableBytes)")
 
     let chatRequest: ChatCompletionRequest
@@ -149,7 +149,7 @@ private func nonStreamingResponse(
     created: Int,
     genOpts: GenerationOptions,
     promptTokens: Int,
-    requestBody: String,
+    requestBody: String?,
     events: [String]
 ) async throws -> (response: Response, trace: ChatRequestTrace) {
     let content: String
@@ -214,8 +214,8 @@ private func nonStreamingResponse(
             stream: false,
             estimatedTokens: promptTokens + completionTokens,
             error: nil,
-            requestBody: loggedBody(requestBody),
-            responseBody: loggedBody(body),
+            requestBody: requestBody,
+            responseBody: captureTruncatedLogBody(body, enabled: serverState.config.debug),
             events: events + ["non-stream response chars=\(content.count)", "finish_reason=\(finishReason)"]
         )
     )
@@ -230,7 +230,7 @@ private func streamingResponse(
     created: Int,
     genOpts: GenerationOptions,
     promptTokens: Int,
-    requestBody: String,
+    requestBody: String?,
     events: [String]
 ) -> (response: Response, trace: ChatRequestTrace) {
     var headers = HTTPFields()
@@ -240,11 +240,13 @@ private func streamingResponse(
     let eventBox = TraceBuffer(events: events + ["stream start"])
     let cleanup = StreamCleanup()
     let taskBox = StreamTaskBox()
+    let captureDebugBodies = serverState.config.debug
 
     let responseStream = AsyncStream<ByteBuffer> { continuation in
         let streamTask = Task {
             let streamStart = Date()
-            var responseLines: [String] = []
+            var responseLines: [String]? = captureDebugBodies ? [] : nil
+            responseLines?.reserveCapacity(16)
             var streamError: String?
             var streamCancelled = false
             var completionTokens = 0
@@ -261,7 +263,7 @@ private func streamingResponse(
 
             // Role announcement chunk
             let roleLine = sseDataLine(sseRoleChunk(id: id, created: created))
-            responseLines.append(roleLine.trimmingCharacters(in: .whitespacesAndNewlines))
+            responseLines?.append(roleLine.trimmingCharacters(in: .whitespacesAndNewlines))
             continuation.yield(ByteBuffer(string: roleLine))
             eventBox.append("sent role chunk")
 
@@ -276,7 +278,7 @@ private func streamingResponse(
                         let idx = content.index(content.startIndex, offsetBy: prev.count)
                         let delta = String(content[idx...])
                         let chunkLine = sseDataLine(sseContentChunk(id: id, created: created, content: delta))
-                        responseLines.append(chunkLine.trimmingCharacters(in: .whitespacesAndNewlines))
+                        responseLines?.append(chunkLine.trimmingCharacters(in: .whitespacesAndNewlines))
                         continuation.yield(ByteBuffer(string: chunkLine))
                         chunkCount += 1
                         eventBox.append("chunk #\(chunkCount) delta=\(delta.count) total=\(content.count)")
@@ -303,7 +305,7 @@ private func streamingResponse(
                         usage: nil
                     )
                     let toolLine = sseDataLine(toolChunk)
-                    responseLines.append(toolLine.trimmingCharacters(in: .whitespacesAndNewlines))
+                    responseLines?.append(toolLine.trimmingCharacters(in: .whitespacesAndNewlines))
                     continuation.yield(ByteBuffer(string: toolLine))
                     eventBox.append("tool_calls detected: \(calls.map(\.name).joined(separator: ", "))")
                     finishReason = "tool_calls"
@@ -319,7 +321,7 @@ private func streamingResponse(
                         usage: nil
                     )
                     let stopLine = sseDataLine(stopChunk)
-                    responseLines.append(stopLine.trimmingCharacters(in: .whitespacesAndNewlines))
+                    responseLines?.append(stopLine.trimmingCharacters(in: .whitespacesAndNewlines))
                     continuation.yield(ByteBuffer(string: stopLine))
                     finishReason = streamFinish
                 }
@@ -327,11 +329,11 @@ private func streamingResponse(
                 // Emit usage stats as a proper chunk before [DONE]
                 let usageChunk = sseUsageChunk(id: id, created: created, promptTokens: promptTokens, completionTokens: completionTokens)
                 let usageLine = sseDataLine(usageChunk)
-                responseLines.append(usageLine.trimmingCharacters(in: .whitespacesAndNewlines))
+                responseLines?.append(usageLine.trimmingCharacters(in: .whitespacesAndNewlines))
                 continuation.yield(ByteBuffer(string: usageLine))
 
                 continuation.yield(ByteBuffer(string: sseDone))
-                responseLines.append("data: [DONE]")
+                responseLines?.append("data: [DONE]")
                 eventBox.append("sent [DONE] total_chars=\(prev.count) finish_reason=\(finishReason)")
             } catch is CancellationError {
                 streamCancelled = true
@@ -342,7 +344,7 @@ private func streamingResponse(
                     message: classified.openAIMessage, type: classified.openAIType, param: nil, code: nil))
                 let errJSON = jsonString(errPayload, pretty: false)
                 let errMsg = "data: \(errJSON)\n\n"
-                responseLines.append(errMsg.trimmingCharacters(in: .whitespacesAndNewlines))
+                responseLines?.append(errMsg.trimmingCharacters(in: .whitespacesAndNewlines))
                 continuation.yield(ByteBuffer(string: errMsg))
                 continuation.yield(ByteBuffer(string: sseDone))
                 streamError = classified.openAIMessage
@@ -359,8 +361,8 @@ private func streamingResponse(
                 stream: true,
                 estimated_tokens: completionTokens,
                 error: streamError,
-                request_body: loggedBody(requestBody),
-                response_body: loggedBody(responseLines.joined(separator: "\n\n")),
+                request_body: requestBody,
+                response_body: responseLines.map { truncateForLog($0.joined(separator: "\n\n")) },
                 events: eventBox.snapshot()
             )
             await serverState.logStore.append(completionLog)
@@ -384,7 +386,7 @@ private func streamingResponse(
             stream: true,
             estimatedTokens: promptTokens,
             error: nil,
-            requestBody: loggedBody(requestBody),
+            requestBody: requestBody,
             responseBody: serverState.config.debug
                 ? "Streaming response in progress. See /v1/chat/completions/stream log for final SSE transcript."
                 : nil,
@@ -445,7 +447,7 @@ private func chatFailure(
     message: String,
     type: String,
     stream: Bool,
-    requestBody: String,
+    requestBody: String?,
     events: [String],
     event: String
 ) -> (response: Response, trace: ChatRequestTrace) {
@@ -455,8 +457,8 @@ private func chatFailure(
             stream: stream,
             estimatedTokens: nil,
             error: message,
-            requestBody: loggedBody(requestBody),
-            responseBody: loggedBody(message),
+            requestBody: requestBody,
+            responseBody: captureTruncatedLogBody(message, enabled: serverState.config.debug),
             events: events + [event]
         )
     )

@@ -134,6 +134,11 @@ func truncateForLog(_ value: String, limit: Int = 4000) -> String {
     return String(value[..<end]) + "\n...[truncated]"
 }
 
+func captureTruncatedLogBody(_ value: @autoclosure () -> String, enabled: Bool) -> String? {
+    guard enabled else { return nil }
+    return truncateForLog(value())
+}
+
 // MARK: - Log Stats Response
 
 struct LogStats: Codable, Sendable {

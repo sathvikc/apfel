@@ -61,7 +61,7 @@ enum ContextManager {
         var nativeToolDefs: [Transcript.ToolDefinition] = []
         var fallbackTools: [ToolDef] = []
         if let tools = effectiveTools, !tools.isEmpty {
-            let converted = SchemaConverter.convert(tools: tools)
+            let converted = await SchemaConverter.convert(tools: tools)
             nativeToolDefs = converted.native
             fallbackTools = converted.fallback
         }

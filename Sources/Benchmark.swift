@@ -5,6 +5,7 @@
 
 import Foundation
 import FoundationModels
+import NIOCore
 import ApfelCore
 
 private struct BenchmarkReport: Encodable {
@@ -76,7 +77,11 @@ private func benchmarkReport() async throws -> BenchmarkReport {
     let textExtraction = await benchmarkTextContent()
     let trimNewest = await benchmarkTrimNewestFirst(options: options)
     let trimOldest = await benchmarkTrimOldestFirst(options: options)
+    let toolSchemaConvert = await benchmarkToolSchemaConvert()
+    let requestBodyCapture = await benchmarkRequestBodyCaptureDisabled()
+    let streamDebugCapture = await benchmarkStreamDebugCaptureDisabled()
     let contextManager = try await benchmarkContextManager(options: options)
+    let requestPipeline = try await benchmarkRequestPipeline(options: options)
     let requestDecode = await benchmarkRequestDecode()
     let toolDetection = await benchmarkToolDetection()
     let responseEncode = await benchmarkResponseEncode()
@@ -93,7 +98,11 @@ private func benchmarkReport() async throws -> BenchmarkReport {
             textExtraction,
             trimNewest,
             trimOldest,
+            toolSchemaConvert,
+            requestBodyCapture,
+            streamDebugCapture,
             contextManager,
+            requestPipeline,
             requestDecode,
             toolDetection,
             responseEncode,
@@ -241,6 +250,103 @@ private func benchmarkContextManager(options: SessionOptions) async throws -> Be
         speedup_ratio: nil,
         validated: true,
         notes: "End-to-end session assembly with tools, JSON mode, and transcript trimming."
+    )
+}
+
+private func benchmarkToolSchemaConvert() async -> BenchmarkCaseResult {
+    let tools = benchmarkTools()
+    let expected = SchemaConverter.convertUncached(tools: tools)
+    let current = await SchemaConverter.convert(tools: tools)
+
+    let iterations = 500
+    let baseline = await measure(iterations: iterations) {
+        _ = SchemaConverter.convertUncached(tools: tools)
+    }
+    let optimized = await measure(iterations: iterations) {
+        _ = await SchemaConverter.convert(tools: tools)
+    }
+
+    return BenchmarkCaseResult(
+        name: "tool_schema_convert",
+        iterations: iterations,
+        baseline_avg_ms: baseline.avgMilliseconds,
+        current_avg_ms: optimized.avgMilliseconds,
+        speedup_ratio: baseline.avgMilliseconds / optimized.avgMilliseconds,
+        validated: expected.native.map(\.name) == current.native.map(\.name)
+            && expected.fallback.map(\.name) == current.fallback.map(\.name),
+        notes: "Caches native tool schema conversion by full tool signature."
+    )
+}
+
+private func benchmarkRequestBodyCaptureDisabled() async -> BenchmarkCaseResult {
+    let requestText = String(decoding: makeRequestJSON(), as: UTF8.self)
+    let body = ByteBuffer(string: requestText)
+    let expected = body.getString(at: body.readerIndex, length: body.readableBytes) ?? ""
+    let current = capturedRequestBody(body, debugEnabled: true)
+
+    let iterations = 2_000
+    let baseline = await measure(iterations: iterations) {
+        _ = body.getString(at: body.readerIndex, length: body.readableBytes) ?? ""
+    }
+    let optimized = await measure(iterations: iterations) {
+        _ = capturedRequestBody(body, debugEnabled: false)
+    }
+
+    return BenchmarkCaseResult(
+        name: "request_body_capture_disabled",
+        iterations: iterations,
+        baseline_avg_ms: baseline.avgMilliseconds,
+        current_avg_ms: optimized.avgMilliseconds,
+        speedup_ratio: baseline.avgMilliseconds / optimized.avgMilliseconds,
+        validated: expected == current,
+        notes: "Skips request-body String materialization when --debug is off."
+    )
+}
+
+private func benchmarkStreamDebugCaptureDisabled() async -> BenchmarkCaseResult {
+    let lines = (0..<96).map { idx in
+        #"data: {"id":"chatcmpl-bench","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"segment-\#(idx)"}}]}"#
+    }
+    let expected = legacyStreamDebugTranscript(lines: lines, debugEnabled: true)
+    let current = currentStreamDebugTranscript(lines: lines, debugEnabled: true)
+
+    let iterations = 500
+    let baseline = await measure(iterations: iterations) {
+        _ = legacyStreamDebugTranscript(lines: lines, debugEnabled: false)
+    }
+    let optimized = await measure(iterations: iterations) {
+        _ = currentStreamDebugTranscript(lines: lines, debugEnabled: false)
+    }
+
+    return BenchmarkCaseResult(
+        name: "stream_debug_capture_disabled",
+        iterations: iterations,
+        baseline_avg_ms: baseline.avgMilliseconds,
+        current_avg_ms: optimized.avgMilliseconds,
+        speedup_ratio: baseline.avgMilliseconds / optimized.avgMilliseconds,
+        validated: expected == current,
+        notes: "Skips per-chunk transcript capture and final join when stream debug logging is off."
+    )
+}
+
+private func benchmarkRequestPipeline(options: SessionOptions) async throws -> BenchmarkCaseResult {
+    let requestJSON = makeRequestJSON()
+    let request = try JSONDecoder().decode(ChatCompletionRequest.self, from: requestJSON)
+    let validation = try await benchmarkRequestPipelineResult(request: request, options: options)
+
+    let iterations = 40
+    let timing = await measure(iterations: iterations) {
+        _ = try? await benchmarkRequestPipelineResult(request: request, options: options)
+    }
+
+    return BenchmarkCaseResult(
+        name: "request_pipeline_noninference",
+        iterations: iterations,
+        baseline_avg_ms: nil,
+        current_avg_ms: timing.avgMilliseconds,
+        speedup_ratio: nil,
+        validated: !validation.finalPrompt.isEmpty && validation.promptTokens > 0 && validation.responseBytes > 0,
+        notes: "Decode + context build + token counting + response encode, excluding model inference."
     )
 }
 
@@ -510,6 +616,38 @@ private func makeRequestJSON() -> Data {
     return Data(payload.utf8)
 }
 
+private func benchmarkRequestPipelineResult(
+    request: ChatCompletionRequest,
+    options: SessionOptions
+) async throws -> (finalPrompt: String, promptTokens: Int, responseBytes: Int) {
+    let (session, finalPrompt) = try await ContextManager.makeSession(
+        messages: request.messages,
+        tools: request.tools,
+        options: options,
+        jsonMode: request.response_format?.type == "json_object",
+        toolChoice: request.tool_choice
+    )
+    let promptTokens = await TokenCounter.shared.count(
+        entries: sessionInputEntries(session, finalPrompt: finalPrompt, options: options)
+    )
+    let payload = ChatCompletionResponse(
+        id: "chatcmpl-bench",
+        object: "chat.completion",
+        created: 1_717_171_717,
+        model: modelName,
+        choices: [
+            .init(
+                index: 0,
+                message: OpenAIMessage(role: "assistant", content: .text("ok")),
+                finish_reason: "stop"
+            )
+        ],
+        usage: .init(prompt_tokens: promptTokens, completion_tokens: 1, total_tokens: promptTokens + 1)
+    )
+    let encoded = jsonString(payload, pretty: false)
+    return (finalPrompt, promptTokens, encoded.utf8.count)
+}
+
 private func signature(for entries: [Transcript.Entry]) -> [String] {
     entries.map { entry in
         switch entry {
@@ -551,6 +689,20 @@ private func legacyTextContent(_ message: OpenAIMessage) -> String? {
     case .none:
         return nil
     }
+}
+
+private func legacyStreamDebugTranscript(lines: [String], debugEnabled: Bool) -> String? {
+    let trimmed = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    return captureTruncatedLogBody(trimmed.joined(separator: "\n\n"), enabled: debugEnabled)
+}
+
+private func currentStreamDebugTranscript(lines: [String], debugEnabled: Bool) -> String? {
+    var captured: [String]? = debugEnabled ? [] : nil
+    captured?.reserveCapacity(16)
+    for line in lines {
+        captured?.append(line.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+    return captured.map { truncateForLog($0.joined(separator: "\n\n")) }
 }
 
 private func legacyTrimNewestFirst(

@@ -20,6 +20,10 @@ final class MCPConnection: @unchecked Sendable {
     init(path: String) async throws {
         self.path = path
 
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw MCPError.processError("MCP server not found: \(path)")
+        }
+
         let proc = Process()
         let stdinP = Pipe()
         let stdoutP = Pipe()

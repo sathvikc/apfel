@@ -12,10 +12,62 @@ import ApfelCore
 
 enum SchemaConverter {
 
+    private struct ToolSignature: Hashable, Sendable {
+        let type: String
+        let name: String
+        let description: String?
+        let parametersJSON: String?
+
+        init(tool: OpenAITool) {
+            type = tool.type
+            name = tool.function.name
+            description = tool.function.description
+            parametersJSON = tool.function.parameters?.value
+        }
+    }
+
+    private struct CachedSchemaConversion: Sendable {
+        let native: [Transcript.ToolDefinition]
+        let fallback: [ToolDef]
+    }
+
+    private actor SchemaConversionCache {
+        static let shared = SchemaConversionCache()
+        private let maxEntries = 64
+        private var entries: [[ToolSignature]: CachedSchemaConversion] = [:]
+
+        func value(for key: [ToolSignature]) -> CachedSchemaConversion? {
+            entries[key]
+        }
+
+        func insert(_ value: CachedSchemaConversion, for key: [ToolSignature]) {
+            if entries.count >= maxEntries {
+                entries.removeAll(keepingCapacity: true)
+            }
+            entries[key] = value
+        }
+    }
+
     /// Convert OpenAI tools to native ToolDefinitions.
     /// Returns native definitions for tools that converted successfully,
     /// and ToolDef fallbacks for tools that failed (for text injection).
-    static func convert(tools: [OpenAITool]) -> (native: [Transcript.ToolDefinition], fallback: [ToolDef]) {
+    static func convert(tools: [OpenAITool]) async -> (native: [Transcript.ToolDefinition], fallback: [ToolDef]) {
+        guard !tools.isEmpty else { return ([], []) }
+
+        let key = tools.map(ToolSignature.init)
+        if let cached = await SchemaConversionCache.shared.value(for: key) {
+            return (cached.native, cached.fallback)
+        }
+
+        let converted = convertUncached(tools: tools)
+        await SchemaConversionCache.shared.insert(
+            CachedSchemaConversion(native: converted.native, fallback: converted.fallback),
+            for: key
+        )
+        return converted
+    }
+
+    static func convertUncached(tools: [OpenAITool]) -> (native: [Transcript.ToolDefinition], fallback: [ToolDef]) {
         var native: [Transcript.ToolDefinition] = []
         var fallback: [ToolDef] = []
 
