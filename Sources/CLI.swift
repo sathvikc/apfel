@@ -255,7 +255,7 @@ func printRelease() {
     print("""
     \(styled(appName, .cyan, .bold)) v\(version) — release info
 
-    \(styled("VERSION:", .yellow, .bold))
+    \(styled("BUILD:", .yellow, .bold))
     \(styled("├", .dim)) version:    \(version)
     \(styled("├", .dim)) commit:     \(buildCommit)
     \(styled("├", .dim)) branch:     \(buildBranch)
@@ -266,15 +266,15 @@ func printRelease() {
     \(styled("CAPABILITIES:", .yellow, .bold))
     \(styled("├", .dim)) on-device:  100% local inference (no cloud, no API keys)
     \(styled("├", .dim)) model:      \(modelName) (FoundationModels framework)
-    \(styled("├", .dim)) context:    4096 tokens
     \(styled("├", .dim)) modes:      single, stream, chat, serve
     \(styled("├", .dim)) server:     OpenAI-compatible (/v1/chat/completions)
-    \(styled("├", .dim)) tools:      function calling via JSON schema
+    \(styled("├", .dim)) tools:      function calling + MCP tool servers (--mcp)
     \(styled("├", .dim)) formats:    plain, json, streaming SSE
     \(styled("└", .dim)) strategies: newest-first, oldest-first, sliding-window, summarize, strict
 
     \(styled("LINKS:", .yellow, .bold))
     \(styled("├", .dim)) repo:       https://github.com/Arthur-Ficial/apfel
+    \(styled("├", .dim)) gui:        https://github.com/Arthur-Ficial/apfel-gui
     \(styled("└", .dim)) requires:   macOS 26+, Apple Silicon, Apple Intelligence enabled
     """)
 }

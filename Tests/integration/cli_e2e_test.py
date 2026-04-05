@@ -601,6 +601,75 @@ def test_update_non_interactive():
     assert result.returncode == 0
 
 
+# --- Release info tests ---
+
+
+def test_release_exits_success():
+    """--release should exit 0."""
+    result = run_cli(["--release"])
+    assert result.returncode == 0
+
+
+def test_release_shows_version_from_dotfile():
+    """--release version must match the .version file (single source of truth)."""
+    expected = (ROOT / ".version").read_text().strip()
+    result = run_cli(["--release"])
+    assert f"version:    {expected}" in result.stdout, \
+        f"Expected version '{expected}' in output:\n{result.stdout}"
+
+
+def test_release_shows_build_info_from_generated_file():
+    """--release must display all fields from the auto-generated BuildInfo.swift."""
+    build_info = (ROOT / "Sources" / "BuildInfo.swift").read_text()
+    result = run_cli(["--release"])
+    output = result.stdout
+
+    # Extract values from BuildInfo.swift
+    for field, label in [
+        ("buildCommit", "commit:"),
+        ("buildBranch", "branch:"),
+        ("buildDate", "built:"),
+        ("buildSwiftVersion", "swift:"),
+        ("buildOS", "os:"),
+    ]:
+        # Parse: let buildFoo = "value"
+        match = re.search(rf'let {field} = "(.+?)"', build_info)
+        assert match, f"Missing {field} in BuildInfo.swift"
+        value = match.group(1)
+        assert value in output, \
+            f"BuildInfo.swift has {field}={value!r} but --release output doesn't contain it"
+
+
+def test_release_contains_no_hardcoded_token_count():
+    """Context size must not be hardcoded - it changes with SDK versions."""
+    result = run_cli(["--release"])
+    assert "4096" not in result.stdout, \
+        "--release should not hardcode token counts"
+
+
+def test_release_mentions_mcp():
+    """--release should mention MCP tool server support."""
+    result = run_cli(["--release"])
+    assert "mcp" in result.stdout.lower(), \
+        "--release should mention MCP support"
+
+
+def test_release_in_help():
+    """--release should appear in the help text."""
+    result = run_cli(["--help"])
+    assert "--release" in result.stdout
+
+
+def test_release_is_not_async():
+    """--release must return instantly (no network, no model queries)."""
+    import time
+    start = time.time()
+    result = run_cli(["--release"], timeout=5)
+    elapsed = time.time() - start
+    assert result.returncode == 0
+    assert elapsed < 2, f"--release took {elapsed:.2f}s - should be instant"
+
+
 # --- README CLI Reference completeness test ---
 
 
