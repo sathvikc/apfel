@@ -112,6 +112,7 @@ func chat(systemPrompt: String?, options: SessionOptions = .defaults) async thro
     let model = makeModel(permissive: options.permissive)
     var session = makeSession(systemPrompt: systemPrompt, options: options)
     let genOpts = makeGenerationOptions(options)
+    let lineEditor = ChatLineEditor(outputFormat: outputFormat)
     var turn = 0
 
     printHeader()
@@ -133,17 +134,8 @@ func chat(systemPrompt: String?, options: SessionOptions = .defaults) async thro
     }
 
     while true {
-        if !quietMode {
-            let prompt = styled("you› ", .green, .bold)
-            if outputFormat == .json {
-                stderr.write(Data(prompt.utf8))
-            } else {
-                print(prompt, terminator: "")
-            }
-        }
-        fflush(stdout)
-
-        guard let input = readLine() else { break }
+        let prompt = quietMode ? "" : "you› "
+        guard let input = lineEditor.readLine(prompt: prompt) else { break }
         let trimmed = input.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty { continue }
         if trimmed.lowercased() == "quit" || trimmed.lowercased() == "exit" { break }

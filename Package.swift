@@ -9,6 +9,10 @@ let package = Package(
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
     ],
     targets: [
+        .systemLibrary(
+            name: "CReadline",
+            path: "Sources/CReadline"
+        ),
         // Pure-logic library — no FoundationModels, testable
         .target(
             name: "ApfelCore",
@@ -21,6 +25,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Hummingbird", package: "hummingbird"),
                 "ApfelCore",
+                "CReadline",
             ],
             path: "Sources",
             exclude: ["Core"],
