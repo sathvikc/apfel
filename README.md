@@ -375,7 +375,6 @@ SERVER (--serve)
   --public-health                         Keep /health unauthenticated
   --footgun                               Disable all protections
   --max-concurrent <n>                    Max concurrent requests (default: 5)
-  --debug                                 Verbose logging + /v1/logs endpoints
 
 META
   -v, --version                           Print version
@@ -490,7 +489,7 @@ apfel --serve --footgun   # only for local development!
 # --max-concurrent — limit parallel model requests
 apfel --serve --max-concurrent 2
 
-# --debug — verbose logging with /v1/logs endpoints
+# --debug — in server mode, also enables /v1/logs endpoints
 apfel --serve --debug
 
 # --benchmark — run internal performance benchmarks

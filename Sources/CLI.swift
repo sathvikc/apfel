@@ -460,7 +460,7 @@ func printUsage() {
           --public-health        Keep /health unauthenticated on non-loopback binds
           --footgun              Disable all protections (--no-origin-check + --cors)
           --max-concurrent <n>   Max concurrent model requests [default: 5]
-          --debug                (also enables /v1/logs inspector in server mode)
+
 
     \(styled("ENVIRONMENT:", .yellow, .bold))
       APFEL_SYSTEM_PROMPT       Default system prompt
