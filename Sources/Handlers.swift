@@ -205,7 +205,7 @@ private func mcpAutoExecuteResponse(
     // Auto-execute MCP tool calls and re-prompt for plain text answer
     let content: String
     do {
-        if let executed = try await executeMCPToolCalls(
+        if let executed = try await executeMCPToolCallsForServer(
             in: rawContent,
             mcpManager: serverState.mcpManager,
             userPrompt: userPrompt,

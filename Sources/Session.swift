@@ -252,7 +252,7 @@ func processPrompt(
     debugLog("response", "length=\(content.count)")
 
     var toolLog: [ToolLogEntry] = []
-    if let result = try await executeMCPToolCalls(
+    if let result = try await executeMCPToolCallsForCLI(
         in: content, mcpManager: mcpManager, userPrompt: prompt,
         systemPrompt: systemPrompt, options: genOpts
     ) {
@@ -276,20 +276,22 @@ func printToolLog(_ toolLog: [ToolLogEntry]) {
     }
 }
 
-// MARK: - MCP Tool Execution (shared by CLI and server)
+// MARK: - MCP Tool Execution
 
-/// Execute MCP tool calls found in model output and re-prompt for a plain text answer.
+/// Result of detecting and executing MCP tool calls (before re-prompting).
+struct MCPExecutionResult {
+    let toolCalls: [ParsedToolCall]
+    let resultParts: [String]
+    let toolLog: [(name: String, args: String, result: String, isError: Bool)]
+}
+
+/// Detect and execute MCP tool calls found in model output.
 /// Returns nil if no tool calls were detected or mcpManager is nil.
-/// Both CLI and server call this to avoid duplicating the detect-execute-reprompt loop.
-func executeMCPToolCalls(
+/// Does NOT re-prompt — callers choose their own re-prompt strategy.
+func detectAndExecuteMCPTools(
     in content: String,
-    mcpManager: MCPManager?,
-    userPrompt: String,
-    systemPrompt: String? = nil,
-    messages: [OpenAIMessage]? = nil,
-    sessionOptions: SessionOptions? = nil,
-    options: GenerationOptions
-) async throws -> (content: String, toolLog: [(name: String, args: String, result: String, isError: Bool)])? {
+    mcpManager: MCPManager?
+) async throws -> MCPExecutionResult? {
     guard let mcpManager,
           let toolCalls = ToolCallHandler.detectToolCall(in: content) else {
         return nil
@@ -304,42 +306,68 @@ func executeMCPToolCalls(
             toolLog.append((name: call.name, args: call.argumentsString, result: result, isError: false))
         } catch {
             if case .toolNotFound = error as? MCPError {
-                // Model hallucinated a tool name that no MCP server provides.
-                // Include the error as a result so the model can still respond.
                 let msg = "\(error)"
                 resultParts.append("\(call.name): error - \(msg)")
                 toolLog.append((name: call.name, args: call.argumentsString, result: msg, isError: true))
             } else {
-                throw error  // Timeouts, server errors, process errors are fatal.
+                throw error
             }
         }
     }
 
-    let finalContent: String
-    if let messages, let sessionOptions {
-        let followUpMessages = appendExecutedToolResults(
-            to: messages,
-            toolCalls: toolCalls,
-            toolResults: toolLog.map { ($0.name, $0.result) }
-        )
-        let (followUpSession, followUpPrompt) = try await ContextManager.makeSession(
-            messages: followUpMessages,
-            tools: nil,
-            options: sessionOptions,
-            jsonMode: false,
-            toolChoice: nil
-        )
-        finalContent = try await followUpSession.respond(to: followUpPrompt, options: options).content
-    } else {
-        // CLI fallback: no prior transcript, so use a plain follow-up prompt.
-        let plainSession = makeSession(systemPrompt: systemPrompt)
-        let toolResult = resultParts.joined(separator: "\n")
-        finalContent = try await plainSession.respond(
-            to: "The user asked: \(userPrompt)\n\nThe tool returned: \(toolResult)\n\nAnswer the user's question using this result.",
-            options: options
-        ).content
+    return MCPExecutionResult(toolCalls: toolCalls, resultParts: resultParts, toolLog: toolLog)
+}
+
+/// CLI path: execute MCP tool calls and re-prompt with a plain follow-up session.
+/// No conversation history is threaded — the follow-up gets only the user prompt + tool results.
+func executeMCPToolCallsForCLI(
+    in content: String,
+    mcpManager: MCPManager?,
+    userPrompt: String,
+    systemPrompt: String?,
+    options: GenerationOptions
+) async throws -> (content: String, toolLog: [(name: String, args: String, result: String, isError: Bool)])? {
+    guard let executed = try await detectAndExecuteMCPTools(in: content, mcpManager: mcpManager) else {
+        return nil
     }
-    return (content: finalContent, toolLog: toolLog)
+
+    let plainSession = makeSession(systemPrompt: systemPrompt)
+    let toolResult = executed.resultParts.joined(separator: "\n")
+    let finalContent = try await plainSession.respond(
+        to: "The user asked: \(userPrompt)\n\nThe tool returned: \(toolResult)\n\nAnswer the user's question using this result.",
+        options: options
+    ).content
+    return (content: finalContent, toolLog: executed.toolLog)
+}
+
+/// Server path: execute MCP tool calls and re-prompt with full conversation context.
+/// Appends tool call/result messages to the conversation and rebuilds a session via ContextManager.
+func executeMCPToolCallsForServer(
+    in content: String,
+    mcpManager: MCPManager?,
+    userPrompt: String,
+    messages: [OpenAIMessage],
+    sessionOptions: SessionOptions,
+    options: GenerationOptions
+) async throws -> (content: String, toolLog: [(name: String, args: String, result: String, isError: Bool)])? {
+    guard let executed = try await detectAndExecuteMCPTools(in: content, mcpManager: mcpManager) else {
+        return nil
+    }
+
+    let followUpMessages = appendExecutedToolResults(
+        to: messages,
+        toolCalls: executed.toolCalls,
+        toolResults: executed.toolLog.map { ($0.name, $0.result) }
+    )
+    let (followUpSession, followUpPrompt) = try await ContextManager.makeSession(
+        messages: followUpMessages,
+        tools: nil,
+        options: sessionOptions,
+        jsonMode: false,
+        toolChoice: nil
+    )
+    let finalContent = try await followUpSession.respond(to: followUpPrompt, options: options).content
+    return (content: finalContent, toolLog: executed.toolLog)
 }
 
 private func appendExecutedToolResults(
