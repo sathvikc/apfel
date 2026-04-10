@@ -40,6 +40,9 @@ class Apfel < Formula
   sha256 "${sha256}"
   license "MIT"
 
+  depends_on :macos
+  depends_on macos: :tahoe
+
   def install
     bin.install "apfel"
   end
@@ -53,16 +56,24 @@ class Apfel < Formula
 
   def caveats
     s = <<~EOS
-      apfel runs entirely on-device and requires Apple Intelligence to be enabled.
+      apfel requires:
+        - macOS 26 Tahoe or newer (enforced by this formula)
+        - Apple Silicon (M1 or later) - Tahoe is Apple Silicon only
+        - Apple Intelligence enabled in System Settings > Apple Intelligence & Siri
 
-      Check model availability with:
+      Verify everything is ready:
         apfel --model-info
+
+      If the model is unavailable, enable Apple Intelligence:
+        https://support.apple.com/en-us/121115
     EOS
     unless Hardware::CPU.arm?
       s += <<~EOS
 
-        WARNING: This binary was built for Apple Silicon (arm64).
-        It may not work on this architecture.
+        Note: Homebrew reports this process as non-arm64. If you are on a real
+        Apple Silicon Mac (M1+), apfel will still run - your brew install may
+        be running under Rosetta. See:
+        https://github.com/Arthur-Ficial/apfel/issues/45
       EOS
     end
     s

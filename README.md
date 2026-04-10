@@ -2,7 +2,7 @@
 
 [![Version 0.9.6](https://img.shields.io/badge/version-0.9.6-blue)](https://github.com/Arthur-Ficial/apfel)
 [![Swift 6.3+](https://img.shields.io/badge/Swift-6.3%2B-F05138?logo=swift&logoColor=white)](https://swift.org)
-[![macOS 26+](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](https://developer.apple.com/macos/)
+[![macOS 26 Tahoe+](https://img.shields.io/badge/macOS-26%20Tahoe%2B-000000?logo=apple&logoColor=white)](https://developer.apple.com/macos/)
 [![No Xcode Required](https://img.shields.io/badge/Xcode-not%20required-orange)](https://developer.apple.com/xcode/resources/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![100% On-Device](https://img.shields.io/badge/inference-100%25%20on--device-green)](https://developer.apple.com/documentation/foundationmodels)
@@ -25,7 +25,7 @@ Every Mac with Apple Silicon has a **built-in LLM** - Apple's on-device foundati
 
 ## Requirements & Install
 
-- Apple Silicon Mac, macOS 26 Tahoe or newer, [Apple Intelligence enabled](https://support.apple.com/en-us/121115)
+- **macOS 26 Tahoe or newer**, Apple Silicon (M1+), [Apple Intelligence enabled](https://support.apple.com/en-us/121115). Older macOS is not supported - Apple's FoundationModels framework does not exist before macOS 26.
 - Building from source requires Command Line Tools with macOS 26.4 SDK (ships Swift 6.3). No Xcode required.
 
 **Homebrew** (recommended):
