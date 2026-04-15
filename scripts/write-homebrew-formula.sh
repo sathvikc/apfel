@@ -40,6 +40,7 @@ class Apfel < Formula
   sha256 "${sha256}"
   license "MIT"
 
+  depends_on arch: :arm64
   depends_on :macos
   depends_on macos: :tahoe
 
