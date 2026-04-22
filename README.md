@@ -237,7 +237,86 @@ apfel --mcp /path/to/local.py --mcp https://remote.example.com/v1 "..."
 
 **Ready-made MCPs.** [apfel-mcp.franzai.com](https://apfel-mcp.franzai.com/) ships three token-budget-optimized MCP servers designed for apfel's 4096-token window: `url-fetch` (Readability article extraction with SSRF guards), `ddg-search` (DuckDuckGo web search, no API key), and the flagship compound `search-and-fetch` tool. Install with `brew install Arthur-Ficial/tap/apfel-mcp`. The repo is open for contributions of new apfel-optimized MCPs - rules at [apfel-mcp.franzai.com/#contribute](https://apfel-mcp.franzai.com/#contribute).
 
-**Persistent MCP registry.** Tired of typing `--mcp path/to/server.py` on every run? [Arthur-Ficial/apfel-run](https://github.com/Arthur-Ficial/apfel-run) is a tiny MIT wrapper that reads a plain text config (`~/.config/apfel/mcps.conf`), builds `APFEL_MCP` from the enabled lines, and `execve`s apfel. Comment out (`-`) a line to disable an MCP, uncomment to re-enable - the same idiom as `~/.ssh/config`. Keeps apfel itself small. See [github.com/Arthur-Ficial/apfel-run](https://github.com/Arthur-Ficial/apfel-run).
+**Persistent MCP registry + full config.** [Arthur-Ficial/apfel-run](https://github.com/Arthur-Ficial/apfel-run) is a MIT wrapper that turns apfel into a **configurable, wrangler-style tool**. See the dedicated [apfel-run section below](#apfel-run-the-configuration-layer) for the full feature set.
+
+## apfel-run: the configuration layer
+
+apfel is a pure UNIX CLI - it has no config file of its own, by design. [**apfel-run**](https://github.com/Arthur-Ficial/apfel-run) is the optional MIT wrapper that gives apfel a proper configuration surface: one TOML (or JSON) file, every apfel setting, multiple profiles, validation, live reloading via `execve`.
+
+### Install
+
+```bash
+brew install Arthur-Ficial/tap/apfel-run
+apfel-run config init                          # writes a starter ~/.config/apfel/config.toml
+$EDITOR ~/.config/apfel/config.toml
+```
+
+### Use it exactly like apfel
+
+```bash
+alias apfel=apfel-run        # drop-in replacement - every apfel flag still works
+
+apfel "what is 42 * 137?"                       # your profile's MCPs + system prompt applied
+apfel --serve --port 11434                      # override any config field at the CLI
+apfel -p research "find and summarise ..."      # pick a different profile
+apfel -- --help                                 # show apfel's own help (escape hatch)
+```
+
+### Config file
+
+```toml
+# ~/.config/apfel/config.toml
+[profile.default]
+system_prompt = "You are concise."
+
+[profile.default.generation]
+temperature = 0.3
+max_tokens = 500
+
+[[profile.default.mcp.server]]
+path = "/opt/homebrew/bin/apfel-mcp-url-fetch"
+
+[[profile.default.mcp.server]]
+path = "/opt/homebrew/bin/apfel-mcp-ddg-search"
+
+[profile.serve]
+mode = "serve"
+[profile.serve.server]
+port = 11434
+token_auto = true
+allowed_origins = ["https://myapp.example.com"]
+
+[profile.research]
+system_prompt = "You are a research assistant. Use tools to ground answers in real sources."
+[[profile.research.mcp.server]]
+path = "/opt/homebrew/bin/apfel-mcp-search-and-fetch"
+```
+
+### What apfel-run adds
+
+| Feature | Details |
+|---|---|
+| **Full TOML + JSON config** | Every apfel flag has a config key. See the [full schema](https://github.com/Arthur-Ficial/apfel-run/blob/main/docs/config-reference.md). |
+| **Profiles** | `[profile.NAME]` sections, independent, switch with `-p NAME` or `APFEL_RUN_PROFILE`. |
+| **Subcommands** | `apfel-run config show/path/validate/profiles/init/edit`, `apfel-run migrate-config`. |
+| **Drop-in safety** | Every apfel flag forwards verbatim at every position - 198 tests confirm, including a parameterised collision test across every flag apfel defines. |
+| **Secrets-aware** | `token_env = "VAR"` reads the env var at runtime; raw `token = "..."` in the file is refused by `config validate`. |
+| **`execve`-based** | No parent process in `ps aux`, signals and exit codes pass straight through apfel-run to apfel. |
+| **Precedence that makes sense** | CLI flags > env vars > profile > apfel defaults. Standard UNIX. |
+| **Hardcore tests** | 174 unit + 16 CLI integration + 8 real-MCP matrix (calculator, url-fetch, ddg-search, search-and-fetch). |
+
+### Relationship to apfel
+
+apfel-run is strictly additive. You do not need it to use apfel. If you have:
+
+- **2+ MCPs** you use every day - apfel-run saves typing.
+- **Different setups per context** (dev server / research chat / always-on server) - profiles.
+- **A team sharing a config** - commit `apfel.toml` to your repo.
+- **CI validation** - `apfel-run config validate` in a pre-commit hook.
+
+Otherwise, keep using `apfel` directly - nothing changes.
+
+Full docs: [github.com/Arthur-Ficial/apfel-run](https://github.com/Arthur-Ficial/apfel-run)
 
 ## OpenAI API Compatibility
 
