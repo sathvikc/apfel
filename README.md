@@ -237,6 +237,8 @@ apfel --mcp /path/to/local.py --mcp https://remote.example.com/v1 "..."
 
 **Ready-made MCPs.** [apfel-mcp.franzai.com](https://apfel-mcp.franzai.com/) ships three token-budget-optimized MCP servers designed for apfel's 4096-token window: `url-fetch` (Readability article extraction with SSRF guards), `ddg-search` (DuckDuckGo web search, no API key), and the flagship compound `search-and-fetch` tool. Install with `brew install Arthur-Ficial/tap/apfel-mcp`. The repo is open for contributions of new apfel-optimized MCPs - rules at [apfel-mcp.franzai.com/#contribute](https://apfel-mcp.franzai.com/#contribute).
 
+**Persistent MCP registry.** Tired of typing `--mcp path/to/server.py` on every run? [Arthur-Ficial/apfel-run](https://github.com/Arthur-Ficial/apfel-run) is a tiny MIT wrapper that reads a plain text config (`~/.config/apfel/mcps.conf`), builds `APFEL_MCP` from the enabled lines, and `execve`s apfel. Comment out (`-`) a line to disable an MCP, uncomment to re-enable - the same idiom as `~/.ssh/config`. Keeps apfel itself small. See [github.com/Arthur-Ficial/apfel-run](https://github.com/Arthur-Ficial/apfel-run).
+
 ## OpenAI API Compatibility
 
 **Base URL:** `http://localhost:11434/v1`
