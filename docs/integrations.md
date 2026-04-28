@@ -119,7 +119,7 @@ Open the agent panel (`Cmd+?`), pick `Apfel (apple on-device)`, send a prompt. Z
 
 ![Zed agent panel powered by apfel](../screenshots/zed-integration.png)
 
-*Zed 0.233.x agent panel: Left, the thread routed through apfel emits tool calls (`grep`, `edit_file`). Right, the file under edit. Bottom, `Apfel (apple on-device)` is the active model.*
+*Zed 0.233.x. Left: agent thread answering through apfel. Right: open Python file. Bottom: `Apfel (apple on-device)` selected. Stream traces from `apfel --serve` confirm `POST /v1/chat/completions/stream 200` per turn.*
 
 ---
 
