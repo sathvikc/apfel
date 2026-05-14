@@ -43,15 +43,29 @@ Check whether apfel's three distribution channels are in sync. If any channel is
    curl -sf https://raw.githubusercontent.com/NixOS/nixpkgs/master/pkgs/by-name/ap/apfel-llm/package.nix | grep -E 'version|hash'
    ```
 
-5. **Compute lag.** For each channel that is behind the latest GitHub Release:
+5. **Check for in-flight bump PRs.** Before computing lag, verify no bump PR is already open upstream. A channel is **not lagging** if a maintainer-side PR exists targeting the canonical version:
+
+   ```bash
+   # nixpkgs - title format: "apfel-llm: <old> -> <new>"
+   gh search prs --repo NixOS/nixpkgs --state open "apfel-llm in:title" --json title,number,createdAt
+
+   # homebrew-core - title format: "apfel <version>"
+   gh search prs --repo Homebrew/homebrew-core --state open "apfel in:title" --json title,number,createdAt
+   ```
+
+   If any open PR's title contains the canonical version (or a higher one), treat that channel as **in flight, not lagging**. Don't open an issue for it. Note in your reasoning that PR #<N> is in the queue.
+
+   This guard exists because nixpkgs review queues can sit on a bump for 1-2 weeks; the bump tooling has already done its job and there is nothing for Franz to fix on his side.
+
+6. **Compute lag** for any channel that is NOT in flight:
    - Time since the GitHub Release was published (use `publishedAt`)
    - Current version in that channel vs. canonical
 
-   A channel is "lagging" if it is at a version older than the canonical AND the canonical release is more than 48 hours old.
+   A channel is "lagging" if it is at a version older than the canonical AND the canonical release is more than 48 hours old AND no bump PR is in flight upstream.
 
-6. **If no lag, do nothing.** The routine budget is precious. Log nothing, open nothing, comment nothing. Exit clean.
+7. **If no lag, do nothing.** The routine budget is precious. Log nothing, open nothing, comment nothing. Exit clean.
 
-7. **If there is lag on one or both channels**, open ONE issue (not two) summarizing the state and suggesting commands. Template below.
+8. **If there is lag on one or both channels** (and no bump PR is in flight upstream), open ONE issue (not two) summarizing the state and suggesting commands. Template below.
 
 ### Issue template
 
@@ -126,7 +140,7 @@ Cheers, Arthur
 ### Exit criteria
 
 You are done when one of:
-- No lag detected - exit clean, no output.
+- No lag detected (or all lagging channels have an upstream bump PR in flight) - exit clean, no output.
 - Lag detected, no existing open issue - one new issue opened with the template above.
 - Lag detected, existing open issue - one comment added with the still-not-in-sync note.
 
