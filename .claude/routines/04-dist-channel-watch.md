@@ -2,7 +2,7 @@
 
 **Triggers:** Scheduled, Mondays 09:00 UTC.
 **Runs on:** Anthropic cloud (Linux, no Apple Intelligence).
-**Status:** Phase 3 - live.
+**Status:** Phase 4 - script-driven.
 
 When pasting this prompt into claude.ai, prepend `_golden-goal.md` verbatim, then append everything below the dividing line.
 
@@ -14,138 +14,72 @@ When pasting this prompt into claude.ai, prepend `_golden-goal.md` verbatim, the
 
 ## Your job
 
-Check whether apfel's three distribution channels are in sync. If any channel is lagging by more than 48 hours, open a GitHub issue on `Arthur-Ficial/apfel` with the information Franz needs to fix it in one command. You do not fix anything yourself.
+Decide whether to open / comment / skip a `dist-sync` issue on `Arthur-Ficial/apfel`, based on the deterministic output of `scripts/dist-watch.sh`.
 
-### The three channels you check
+**You do not check channel versions yourself.** The script does that. You do not look up in-flight bump PRs yourself. The script does that. You do not write the issue body. The script does that. Your only job is to call `gh` correctly based on the script's three output modes.
 
-| Channel | Source of truth |
-|---|---|
-| **GitHub Releases** (the upstream that the other two feed from) | `gh release view --repo Arthur-Ficial/apfel` latest tag, published-at |
-| **homebrew-core** (`brew install apfel`) | `curl -s https://raw.githubusercontent.com/Homebrew/homebrew-core/master/Formula/a/apfel.rb` - look for the `version` / `url` fields |
-| **nixpkgs** (`nix profile install nixpkgs#apfel-llm`) | `curl -s https://raw.githubusercontent.com/NixOS/nixpkgs/master/pkgs/by-name/ap/apfel-llm/package.nix` - look for the `version` field |
+This routine used to be a long narrative prompt that asked you to fetch URLs, parse versions, search PRs, and decide. That structure failed on 2026-05-18 when you skipped the in-flight-PR guard and filed a false-alarm issue #154 against a nixpkgs lag that was already covered by upstream PR #520183. The work was moved into a shell script so the decision is deterministic; your job is just to act on its output.
 
-### Step-by-step
-
-1. **Read `CLAUDE.md`** and `docs/release.md` to stay current on the distribution story.
-
-2. **Fetch the canonical version** from the latest GitHub Release:
-   ```bash
-   gh release view --repo Arthur-Ficial/apfel --json tagName,publishedAt
-   ```
-
-3. **Fetch the homebrew-core formula** and parse its version:
-   ```bash
-   curl -sf https://raw.githubusercontent.com/Homebrew/homebrew-core/master/Formula/a/apfel.rb | grep -E 'version|url'
-   ```
-
-4. **Fetch the nixpkgs package** and parse its version:
-   ```bash
-   curl -sf https://raw.githubusercontent.com/NixOS/nixpkgs/master/pkgs/by-name/ap/apfel-llm/package.nix | grep -E 'version|hash'
-   ```
-
-5. **Check for in-flight bump PRs.** Before computing lag, verify no bump PR is already open upstream. A channel is **not lagging** if a maintainer-side PR exists targeting the canonical version:
-
-   ```bash
-   # nixpkgs - title format: "apfel-llm: <old> -> <new>"
-   gh search prs --repo NixOS/nixpkgs --state open "apfel-llm in:title" --json title,number,createdAt
-
-   # homebrew-core - title format: "apfel <version>"
-   gh search prs --repo Homebrew/homebrew-core --state open "apfel in:title" --json title,number,createdAt
-   ```
-
-   If any open PR's title contains the canonical version (or a higher one), treat that channel as **in flight, not lagging**. Don't open an issue for it. Note in your reasoning that PR #<N> is in the queue.
-
-   This guard exists because nixpkgs review queues can sit on a bump for 1-2 weeks; the bump tooling has already done its job and there is nothing for Franz to fix on his side.
-
-6. **Compute lag** for any channel that is NOT in flight:
-   - Time since the GitHub Release was published (use `publishedAt`)
-   - Current version in that channel vs. canonical
-
-   A channel is "lagging" if it is at a version older than the canonical AND the canonical release is more than 48 hours old AND no bump PR is in flight upstream.
-
-7. **If no lag, do nothing.** The routine budget is precious. Log nothing, open nothing, comment nothing. Exit clean.
-
-8. **If there is lag on one or both channels** (and no bump PR is in flight upstream), open ONE issue (not two) summarizing the state and suggesting commands. Template below.
-
-### Issue template
-
-Title format: `dist-sync: <channel> behind v<canonical> by <N>h`
-
-Body (short, Arthur voice):
-
-```
-Routine check this morning - looks like <channel(s)> are trailing the latest release.
-
-## State
-
-| Channel | Current | Expected | Lag |
-|---|---|---|---|
-| GitHub Releases | v<canonical> | - | - |
-| homebrew-core | v<hb-current> | v<canonical> | ~<N>h |
-| nixpkgs `apfel-llm` | <nix-current> | <canonical> | ~<N>h |
-
-## Fixing it (for you, not me)
-
-**Homebrew-core:** normally autobumps within ~24h. If it is stuck, manually:
-
-\```bash
-brew bump-formula-pr apfel \
-  --url=https://github.com/Arthur-Ficial/apfel/releases/download/v<canonical>/apfel-<canonical>-arm64-macos.tar.gz \
-  --sha256=<sha256>
-\```
-
-(SHA256 from the release asset: `<computed-sha256>`)
-
-**nixpkgs:** `make release` opens a `NixOS/nixpkgs` PR automatically as its final step (`scripts/publish-nixpkgs-bump.sh`). If the channel is lagging anyway, the local bump didn't fire (release cut on a machine without `gh` logged in, or it failed silently). Re-run on demand:
-
-\```bash
-./scripts/publish-nixpkgs-bump.sh --version <canonical>
-\```
-
-`r-ryantm` is the safety net (~weekly) if you don't.
-
-## What I did NOT do
-
-No bump PRs, no pushes, no formula edits. Routines never touch distribution channels - that's yours.
-
-Cheers, Arthur
-cc @franzenzenhofer
-```
-
-### De-duplication
-
-Before opening a new issue, check for an existing open dist-sync issue:
+## The one command
 
 ```bash
-gh issue list --repo Arthur-Ficial/apfel --state open --search "dist-sync" --json number,title
+body=$(./scripts/dist-watch.sh)
 ```
 
-If one already exists for the same canonical version, **update** it with a comment rather than opening a duplicate:
+The script's exit code and stdout determine what you do next. Three cases:
 
+### Case A - script exits non-zero
+
+Hard failure (network, missing tool). Do not open or comment on anything. Exit clean. Next Monday will try again.
+
+### Case B - script exits 0 with no stdout
+
+All channels in sync, or the lag is covered by an in-flight upstream bump PR, or the canonical release is younger than the 48h grace window. **Do nothing.** No issue, no comment, no log line. Exit clean.
+
+This is the case that misfired in #154. It must misfire as silence, not as a ticket.
+
+### Case C - script exits 0, stdout starts with `STILL: `
+
+A `dist-sync` issue is already open for the current canonical version and the lag hasn't cleared. **Comment on the existing issue, do not open a new one.**
+
+Parse the issue number from the line (`STILL: dist-sync issue #N is still open ...`) and post:
+
+```bash
+issue_num=$(echo "$body" | sed -nE 's/STILL: dist-sync issue #([0-9]+).*/\1/p')
+today=$(date -u +%Y-%m-%d)
+gh issue comment "$issue_num" --repo Arthur-Ficial/apfel --body "Still not in sync as of ${today}. No action taken on my end.
+
+Cheers, Arthur"
 ```
-Still not in sync as of <today>. Same state as the issue body, channels still at <hb-current> / <nix-current>. No action taken on my end.
 
-Cheers, Arthur
+### Case D - script exits 0, stdout is a full markdown issue body
+
+Real lag, no existing tracker issue. **Open one new issue.** Title format is fixed; body comes verbatim from the script.
+
+```bash
+canonical=$(gh release view --repo Arthur-Ficial/apfel --json tagName --jq '.tagName | sub("^v"; "")')
+hours=$(echo "$body" | grep -oE '~[0-9]+h' | head -1 | tr -d '~h')
+channels=$(echo "$body" | head -1 | sed -E 's/.*looks like (.*) trailing.*/\1/')
+
+gh issue create --repo Arthur-Ficial/apfel \
+  --title "dist-sync: ${channels} behind v${canonical} by ~${hours}h" \
+  --body "$body"
 ```
 
-### Hard limits - repeat
+## Hard limits
 
-- Never run `brew bump-formula-pr`, never push to `Arthur-Ficial/homebrew-tap`.
-- Never run a manual nixpkgs bump from the routine - point Franz at `scripts/publish-nixpkgs-bump.sh --version <canonical>` (which he runs locally), with the manual self-bump in [docs/nixpkgs.md](../../docs/nixpkgs.md) as recovery.
-- Never create PRs against homebrew-core or nixpkgs from this routine.
-- Never edit the formula or package.nix.
-- Never close any issue.
-- Fetch only public endpoints - no authenticated reads of the tap from this routine.
+- **Never** edit the body. The script wrote it. If it looks wrong, that is a script bug and the routine should open a meta-issue against the script instead of patching prose on the fly.
+- **Never** run `brew bump-formula-pr`, push to `Arthur-Ficial/homebrew-tap`, or run a nixpkgs bump from the routine.
+- **Never** close any issue.
+- **Never** invent advice that isn't in the script's template. If the user sees stale workflow names or made-up fix commands, it is because you ignored this rule.
+- The routine has no fallback "compose the body yourself if the script is unhappy". If the script is unhappy, that is Case A - exit clean.
 
-### Exit criteria
+## Exit criteria
 
-You are done when one of:
-- No lag detected (or all lagging channels have an upstream bump PR in flight) - exit clean, no output.
-- Lag detected, no existing open issue - one new issue opened with the template above.
-- Lag detected, existing open issue - one comment added with the still-not-in-sync note.
+Exactly one of:
+- Case A (script failed): no side effects, exit clean.
+- Case B (no lag): no side effects, exit clean.
+- Case C (already tracked): one comment on the existing issue, exit clean.
+- Case D (new lag): one new issue opened, exit clean.
 
-### If something goes wrong
-
-- Homebrew formula URL 404s (file moved to a different letter directory or renamed) - post the issue anyway, note in the body that automatic checks need updating, `cc @franzenzenhofer`.
-- nixpkgs master temporarily unreachable - skip this run, do not open an issue about connectivity. Next Monday will try again.
-- Canonical GitHub Release tag is a pre-release or draft - skip this run entirely.
+Anything else - including a second comment, a second issue, an edit to the formula, a touch on the bump script, or any output to the user - is a routine failure.
