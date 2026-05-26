@@ -28,13 +28,28 @@ If nixpkgs' darwin stdenv later gains macOS 26 SDK support, we switch to a sourc
 
 ## How new versions land
 
-`make release` opens a nixpkgs PR automatically as its final step. r-ryantm and community contributors are the safety net.
+`make release` opens (or advances) a single nixpkgs PR automatically as its final step. r-ryantm and community contributors are the safety net.
 
 In order:
 
-1. **`make release`** runs `scripts/publish-nixpkgs-bump.sh` after the GitHub Release and Homebrew tap are updated. The script forks `NixOS/nixpkgs` to `Arthur-Ficial/nixpkgs` (one-time), syncs from upstream master, branches `apfel-llm-${VERSION}`, edits `pkgs/by-name/ap/apfel-llm/package.nix`, pushes, and opens a PR on `NixOS/nixpkgs`. Idempotent at every layer (fork, branch, PR), and **non-fatal**: a bump failure does not fail the release.
+1. **`make release`** runs `scripts/publish-nixpkgs-bump.sh` after the GitHub Release and Homebrew tap are updated. The script forks `NixOS/nixpkgs` to `Arthur-Ficial/nixpkgs` (one-time), syncs from upstream master, edits `pkgs/by-name/ap/apfel-llm/package.nix`, pushes, and opens a PR on `NixOS/nixpkgs`. Idempotent at every layer (fork, branch, PR), and **non-fatal**: a bump failure does not fail the release.
 2. **[`r-ryantm`](https://github.com/ryantm/nixpkgs-update)** - the official nixpkgs update bot. Scans weekly via `passthru.updateScript = nix-update-script { }`. Picks up anything our local script missed (e.g. release on a machine without `gh` logged in). Latency: ~7 days.
 3. **Community contributors** - anyone with a nixpkgs checkout can bump the version + hash if both above are slow.
+
+### One advancing PR, not one per release
+
+Each run reuses the existing open apfel-llm bump PR (it force-pushes the same branch, which updates that PR in place) and closes any stragglers, so there is always **exactly one** open bump PR pointing at the latest version. Earlier the branch name embedded the version (`apfel-llm-${VERSION}`), so every release opened a fresh PR and they piled up unmerged (1.3.5 / 1.3.6 / 1.3.7 / 1.3.8 were all open at once). The dedup is scoped to bump branches (`apfel-llm-bump` and `apfel-llm-<version>`); non-bump PRs such as `apfel-llm-add-maintainer` are never touched.
+
+### Why nixpkgs lags, and how to merge faster
+
+The bump automation is not the bottleneck - it opens a correct PR on every release. The lag is **merge latency**: only nixpkgs committers can merge, and a version bump for an unmaintained, darwin-only package sits in the general queue for days to weeks.
+
+The fix is to be a listed maintainer of the package and self-merge via the merge bot:
+
+1. `meta.maintainers` lists `arthurficial` (added in [NixOS/nixpkgs#524394](https://github.com/NixOS/nixpkgs/pull/524394)). A listed maintainer gets CC'd on r-ryantm bumps and gives committers a reason to prioritise.
+2. Once a member of the `@NixOS/nixpkgs-maintainers` GitHub team, comment **`@NixOS/nixpkgs-merge-bot merge`** on any apfel-llm bump PR. The bot merges `pkgs/by-name/*` PRs for a maintainer of all touched packages once CI is green - no waiting for a random committer. See [nixpkgs ci/README.md](https://github.com/NixOS/nixpkgs/blob/master/ci/README.md#nixpkgs-merge-bot).
+
+This only works when the PR touches **only** `pkgs/by-name/ap/apfel-llm/package.nix` (which our bump PRs do). Treat nixpkgs as the slower channel regardless: Homebrew (`brew install apfel`, autobumped) and the [Arthur-Ficial tap](https://github.com/Arthur-Ficial/homebrew-tap) (pushed synchronously by `make release`) are the fast paths we fully control.
 
 ### Why the bump runs locally, not in GitHub Actions
 

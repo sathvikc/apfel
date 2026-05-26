@@ -135,8 +135,36 @@ if ! $dry_run; then
     exit 0
   fi
 
-  branch="apfel-llm-${version}"
-  info "Creating branch $branch (old: $old_version, new: $version)..."
+  # Advance a SINGLE bump PR instead of opening a new one per release. Find any
+  # open apfel-llm bump PR from our fork; reuse its branch (force-push updates
+  # that PR in place) and close any extras. Only when none exist do we open a
+  # fresh PR on a stable branch. This stops the version-named-branch pileup that
+  # left 1.3.5/1.3.6/1.3.7/1.3.8 all open at once.
+  open_prs=$(gh pr list --repo "$UPSTREAM" --state open --search "apfel-llm in:title" \
+    --json number,headRefName,headRepositoryOwner \
+    --jq '[.[] | select(.headRepositoryOwner.login=="Arthur-Ficial")]' 2>/dev/null || echo '[]')
+
+  # Keep the newest, close the rest. The branch regex matches only bump branches
+  # (apfel-llm-bump or apfel-llm-<version>), so non-bump PRs such as
+  # apfel-llm-add-maintainer are never reused or closed by this flow.
+  keep_number=""; keep_branch=""; dup_numbers=""
+  { read -r keep_number; read -r keep_branch; read -r dup_numbers; } < <(
+    printf '%s' "$open_prs" | python3 -c 'import json,re,sys
+prs=[p for p in json.load(sys.stdin) if re.match(r"^apfel-llm-(bump|[0-9])", p["headRefName"])]
+prs.sort(key=lambda p: p["number"])
+if prs:
+    print(prs[-1]["number"]); print(prs[-1]["headRefName"])
+    print(",".join(str(p["number"]) for p in prs[:-1]))
+else:
+    print(); print(); print()')
+
+  if [[ -n "$keep_branch" ]]; then
+    branch="$keep_branch"
+    info "Reusing open PR #$keep_number (branch $branch; old: $old_version, new: $version)..."
+  else
+    branch="apfel-llm-bump"
+    info "No open bump PR - using stable branch $branch (old: $old_version, new: $version)..."
+  fi
   git checkout -B "$branch" --quiet
 
   info "Running scripts/bump-nixpkgs.sh..."
@@ -163,15 +191,10 @@ Release: https://github.com/Arthur-Ficial/apfel/releases/tag/v${version}
 
 This PR was opened automatically by \`scripts/publish-nixpkgs-bump.sh\` as a step of the apfel release flow. The package's \`passthru.updateScript\` (\`nix-update-script\`) would produce the same diff."
 
-  # gh CLI's --head filter takes a bare branch name; cross-org disambiguation
-  # comes from filtering on headRepositoryOwner.login afterwards.
-  existing_pr=$(gh pr list --repo "$UPSTREAM" --state open \
-    --head "$branch" \
-    --json url,headRepositoryOwner \
-    --jq ".[] | select(.headRepositoryOwner.login==\"Arthur-Ficial\") | .url" 2>/dev/null || true)
-
-  if [[ -n "$existing_pr" ]]; then
-    info "PR already open: $existing_pr"
+  if [[ -n "$keep_number" ]]; then
+    info "Updating PR #$keep_number to $version..."
+    gh pr edit "$keep_number" --repo "$UPSTREAM" --title "$pr_title" --body "$pr_body" >/dev/null
+    pr_url=$(gh pr view "$keep_number" --repo "$UPSTREAM" --json url --jq .url)
   else
     info "Opening PR on $UPSTREAM..."
     pr_url=$(gh pr create \
@@ -180,7 +203,17 @@ This PR was opened automatically by \`scripts/publish-nixpkgs-bump.sh\` as a ste
       --head "Arthur-Ficial:${branch}" \
       --title "$pr_title" \
       --body "$pr_body")
-    info "PR opened: $pr_url"
+  fi
+  info "PR: $pr_url"
+
+  # Close any OTHER open apfel-llm bump PRs from our fork (dedup / self-heal).
+  if [[ -n "$dup_numbers" ]]; then
+    echo "$dup_numbers" | tr ',' '\n' | while read -r dup; do
+      [[ -z "$dup" ]] && continue
+      info "Closing superseded duplicate PR #$dup"
+      gh pr close "$dup" --repo "$UPSTREAM" \
+        --comment "Superseded by #${keep_number}, which advances the apfel-llm bump to ${version}. Closing to keep a single open bump PR." >/dev/null 2>&1 || warn "could not close #$dup"
+    done
   fi
 else
   info "[dry-run] would: sync, branch, bump, commit, push, open PR for v$version"
