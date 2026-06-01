@@ -344,13 +344,77 @@ func executeMCPToolCallsForCLI(
         return nil
     }
 
+    var aggregatedLog = executed.toolLog
     let plainSession = makeSession(systemPrompt: systemPrompt)
-    let toolResult = executed.resultParts.joined(separator: "\n")
-    let finalContent = try await plainSession.respond(
+    var toolResult = executed.resultParts.joined(separator: "\n")
+    var finalContent = try await plainSession.respond(
         to: "The user asked: \(userPrompt)\n\nThe tool returned: \(toolResult)\n\nAnswer the user's question using this result.",
         options: options
     ).content
-    return (content: finalContent, toolLog: executed.toolLog)
+
+    // The re-prompt answer may itself contain another tool_calls request. If we
+    // returned it verbatim that JSON would leak to the user as raw text. Run a
+    // bounded re-detection loop: execute any further tool calls and re-prompt
+    // again, with a hard cap so a model that keeps emitting tool_calls cannot
+    // spin forever. On cap exhaustion we strip the trailing tool-call JSON so no
+    // raw protocol text leaks.
+    let maxReprompts = 3
+    var reprompts = 0
+    while reprompts < maxReprompts,
+          let followUp = try await detectAndExecuteMCPTools(in: finalContent, mcpManager: mcpManager) {
+        reprompts += 1
+        aggregatedLog.append(contentsOf: followUp.toolLog)
+        toolResult = followUp.resultParts.joined(separator: "\n")
+        finalContent = try await plainSession.respond(
+            to: "The user asked: \(userPrompt)\n\nThe tool returned: \(toolResult)\n\nAnswer the user's question using this result.",
+            options: options
+        ).content
+    }
+
+    // Cap exhausted but the model is still emitting a tool call: strip the raw
+    // JSON so it never reaches the user as text.
+    if ToolCallHandler.detectToolCall(in: finalContent) != nil {
+        finalContent = stripToolCallJSON(from: finalContent)
+    }
+
+    return (content: finalContent, toolLog: aggregatedLog)
+}
+
+/// Remove a trailing `{"tool_calls": ...}` JSON block from model output so it
+/// never leaks to the user as raw protocol text. Mirrors the string-aware
+/// balanced-brace scan in `ToolCallHandler.extractCandidates`. If no balanced
+/// block is found, the original text (trimmed) is returned unchanged.
+func stripToolCallJSON(from text: String) -> String {
+    guard let range = text.range(of: "{\"tool_calls\"") else {
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    var depth = 0
+    var inString = false
+    var escaped = false
+    var idx = range.lowerBound
+    while idx < text.endIndex {
+        let ch = text[idx]
+        if inString {
+            if escaped { escaped = false }
+            else if ch == "\\" { escaped = true }
+            else if ch == "\"" { inString = false }
+        } else if ch == "\"" {
+            inString = true
+        } else if ch == "{" {
+            depth += 1
+        } else if ch == "}" {
+            depth -= 1
+            if depth == 0 {
+                let before = String(text[text.startIndex..<range.lowerBound])
+                let after = String(text[text.index(after: idx)...])
+                return (before + after).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        idx = text.index(after: idx)
+    }
+    // No balanced close — drop everything from the marker onward.
+    return String(text[text.startIndex..<range.lowerBound])
+        .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 /// Server path: execute MCP tool calls and re-prompt with full conversation context.
