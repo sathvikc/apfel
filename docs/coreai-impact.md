@@ -1,24 +1,35 @@
-# Apple Core AI - what it means for apfel
+# WWDC 2026 on-device AI - what it means for apfel
 
-> Knowledge page. Last researched 2026-06-09 against the live (beta) docs at
-> [developer.apple.com/documentation/coreai](https://developer.apple.com/documentation/coreai/).
+> Knowledge page. Last researched 2026-06-09 against Apple's docs:
+> [developer.apple.com/documentation/updates/foundationmodels](https://developer.apple.com/documentation/updates/foundationmodels)
+> (FoundationModels OS 27 updates) and
+> [developer.apple.com/documentation/coreai](https://developer.apple.com/documentation/coreai/) (Core AI, beta).
 > Tracking epic: [#189](https://github.com/Arthur-Ficial/apfel/issues/189).
 
 ## TL;DR
 
-**Core AI does not change what apfel is.** apfel exposes Apple's on-device LLM through
-the **FoundationModels** framework (`LanguageModelSession`, `SystemLanguageModel`). Core AI
-is a different framework at a lower layer: it is the **modernized successor to Core ML**, a
-tensor inference runtime for running arbitrary models (`.aimodel` files) on the CPU, GPU, and
-Neural Engine. It has no chat, no prompts, no tool calling, no structured generation, no
-embeddings, and no OpenAI-compatible or server surface.
+WWDC 2026 surfaced two things. **The one that matters for apfel is the FoundationModels OS 27
+update** - not the "Core AI" rename, which is a non-event for apfel core.
 
-- apfel keeps building on FoundationModels. No migration is required or possible.
-- The real WWDC 2026 items to watch are **FoundationModels** changes shipping in the same OS
-  release (notably any context-window increase beyond 4096 tokens), and **macOS 27** build and
-  runtime compatibility.
-- Core AI is, at most, a **future opportunity**: a bring-your-own-weights runtime that a
-  separate sister tool could use. It is not a change to apfel core.
+**The real story: FoundationModels gets a substantial OS 27 update.** apfel is built on
+FoundationModels (`LanguageModelSession`, `SystemLanguageModel`), and Apple's official updates page
+confirms (not press speculation):
+
+- A **new on-device model** (reportedly Gemini-distilled) - Apple says *"test your prompts with the
+  new model."* apfel must re-qualify on OS 27 (#193).
+- A new **`LanguageModel` protocol** plus open-source **`CoreAILanguageModel`/`MLXLanguageModel`** -
+  an official bridge to drive any model through the FoundationModels session API. This makes a
+  bring-your-own-model path tractable (#195).
+- **`ToolCallingMode`** and **improved error types** - adoption candidates for apfel (#197).
+- **On-device context window still reads 4096**; the bigger window is the cloud
+  `PrivateCloudComputeLanguageModel`, which apfel does not use - so apfel's 4096 docs likely stand (#192).
+
+**The non-event: "Core AI" is just the Core ML successor.** It is a low-level tensor inference runtime
+(`AIModel`/`NDArray`/`InferenceFunction`), **not** a replacement for FoundationModels, with no chat,
+prompts, tool calling, or server surface. apfel needs **no Core AI code** and **no migration**. Core AI
+only matters as the runtime behind the new `CoreAILanguageModel` bridge above. The rest of this page
+explains exactly what Core AI is and is not, so the recurring "why doesn't apfel use Core AI?" question
+is answered once.
 
 ## What Core AI actually is
 
