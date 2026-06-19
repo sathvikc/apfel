@@ -50,7 +50,7 @@ Because r-ryantm never opens a PR, the [nixpkgs merge bot](https://github.com/Ni
 ### The pipeline (self-opened, build-verified PR)
 
 1. **`make release`** runs `scripts/publish-nixpkgs-bump.sh` after the GitHub Release and Homebrew tap are updated. It forks `NixOS/nixpkgs` to `Arthur-Ficial/nixpkgs` (one-time), syncs from upstream master, edits `pkgs/by-name/ap/apfel-llm/package.nix`, **build-verifies the result with `nix-build -A apfel-llm` on this aarch64-darwin host** (r-ryantm cannot do this; we can, because the host matches `meta.platforms`), pushes, and opens/advances one PR on `NixOS/nixpkgs`. Idempotent at every layer (fork, branch, PR) and **non-fatal**: a bump failure does not fail the release. A failed `nix-build` aborts before any PR is opened, so we never submit a broken hash.
-2. The same script runs **twice daily via launchd** (`~/Library/LaunchAgents/com.arthurficial.apfel-nixpkgs-bump.plist`, logs at `~/Library/Logs/apfel-nixpkgs-bump.log`) as a catch-up, keeping the single open PR pointed at the latest GitHub release even if a release run skipped the bump.
+2. It runs **twice daily via launchd** (`~/Library/LaunchAgents/com.arthurficial.apfel-nixpkgs-bump.plist`, logs at `~/Library/Logs/apfel-nixpkgs-bump.log`) as a catch-up, keeping the single open PR pointed at the latest GitHub release even if a release run skipped the bump. The launchd job runs it through `scripts/nixpkgs-bump-cron.sh`, which classifies the outcome and emails Franz once per distinct failure - so a silent break (see "Recognizing the 2FA-compliance failure" below) can never again sit unnoticed.
 3. The PR follows nixpkgs best practice: `apfel-llm: <old> -> <new>` commit/title, touches only `pkgs/by-name`, fills the **Things done** checklist with the real aarch64-darwin build, and carries an **automation/AI disclosure** per [CONTRIBUTING.md](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#automationai-policy). The bump commit carries **no `Assisted-by:` trailer** - a deterministic version+hash bump is exempt as standard update-script automation (the same exemption r-ryantm's own commits rely on).
 4. A **nixpkgs committer merges it** when they get to it. We can only reduce friction (clean PR, green CI, maintained package); we cannot remove the wait.
 
@@ -60,7 +60,22 @@ Each run reuses the existing open apfel-llm bump PR (it force-pushes the same br
 
 ### Why nixpkgs lags
 
-The bump automation is not the bottleneck - it opens a correct, build-verified PR on every release. The lag is **merge latency**: only nixpkgs committers can merge, and a maintainer-opened bump for a darwin-only package cannot use the merge bot (the "opened by r-ryantm or a committer" rule), so it sits in the committer queue for days to weeks. Being a maintainer helps a committer merge it faster but does not remove the wait, and no automation can - it is inherent to darwin-only + non-committer. Treat nixpkgs as the slower channel: Homebrew (`brew install apfel`, autobumped) and the [Arthur-Ficial tap](https://github.com/Arthur-Ficial/homebrew-tap) (pushed synchronously by `make release`) are the fast paths we fully control.
+In the normal case the bump automation is not the bottleneck - it opens a correct, build-verified PR on every release. The lag is then **merge latency**: only nixpkgs committers can merge, and a maintainer-opened bump for a darwin-only package cannot use the merge bot (the "opened by r-ryantm or a committer" rule), so it sits in the committer queue for days to weeks. Being a maintainer helps a committer merge it faster but does not remove the wait, and no automation can - it is inherent to darwin-only + non-committer. Treat nixpkgs as the slower channel: Homebrew (`brew install apfel`, autobumped) and the [Arthur-Ficial tap](https://github.com/Arthur-Ficial/homebrew-tap) (pushed synchronously by `make release`) are the fast paths we fully control.
+
+But "automation is not the bottleneck" only holds while the automation can actually reach GitHub. There is a second, nastier failure mode that once stranded nixpkgs at 1.0.5 for days while apfel shipped 1.6.0.
+
+### Recognizing the 2FA-compliance failure
+
+The NixOS org enforces secure-2FA-only. If the Arthur-Ficial GitHub account has an **SMS** 2FA factor configured, GitHub returns a 403 on **every** authenticated NixOS request - not just `gh pr create`, but **reads too** (`gh api repos/NixOS/nixpkgs`, and `gh pr list` silently returns empty). The bump then build-verifies fine, fails at PR creation, and - because the read is also blocked - even concludes no PR exists. The launchd job had no alerting, so it failed twice a day, silently, for days. Log signature:
+
+```
+GraphQL: `NixOS` requires everyone in the organization to enable two-factor
+authentication ... Please remove SMS if configured as it is not considered secure.
+```
+
+**Fix:** remove the SMS factor (GitHub Settings -> Password and authentication -> SMS/Text message -> Disable). Authenticator-app TOTP stays the compliant anchor; recovery codes live in `pass show github/recovery-codes`. Details in `~/.claude/rules/services.md`.
+
+This is now caught automatically: `scripts/publish-nixpkgs-bump.sh` probes one NixOS read up front and exits `AUTH_2FA`, and the launchd wrapper `scripts/nixpkgs-bump-cron.sh` emails Franz once per distinct failure instead of failing silently.
 
 ### Why the bump runs locally, not in GitHub Actions
 

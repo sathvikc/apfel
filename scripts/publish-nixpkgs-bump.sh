@@ -56,6 +56,19 @@ done
 warn() { echo "WARN: $*" >&2; }
 info() { echo "===> $*"; }
 
+# finish <STATUS_TOKEN> <exit_code> [extra...] - emit ONE machine-readable status
+# line and exit. scripts/nixpkgs-bump-cron.sh parses this to tell a benign run
+# (IN_SYNC, PR_OPENED, PR_ADVANCED, PR_WAITING, TOOLING_SKIP, DRY_RUN) from an
+# actionable failure (AUTH_2FA, AUTH_GENERIC, BUILD_FAIL, PUSH_FAIL,
+# PR_CREATE_FAIL, FORK_FAIL, INVALID_VERSION) and alert Franz exactly once per
+# distinct failure. All failures keep a non-zero code so `make release` still
+# treats the bump as non-fatal (any non-zero -> WARN, never fails the release).
+finish() {
+  local token="$1" code="$2"; shift 2
+  echo "NIXPKGS_BUMP_STATUS=${token} version=${version:-unknown} ${*}"
+  exit "$code"
+}
+
 # Default target = latest published GitHub release (robust for the launchd
 # catch-up run, which has no --version and where the local .version may lag a
 # release made elsewhere). Falls back to local .version if the API is down.
@@ -65,8 +78,8 @@ if [[ -z "$version" ]]; then
 fi
 
 if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "ERR: invalid version '$version' (expected X.Y.Z)" >&2
-  exit 1
+  warn "invalid version '$version' (expected X.Y.Z)"
+  finish INVALID_VERSION 1
 fi
 
 # --- Tool checks (non-fatal: warn and skip if missing) ---
@@ -80,7 +93,7 @@ done
 
 if $need_skip; then
   warn "Run manually later with: $0 --version $version"
-  exit 0
+  finish TOOLING_SKIP 0
 fi
 
 # gh auth status exits non-zero if ANY configured account is broken (even with
@@ -89,7 +102,22 @@ fi
 if ! gh api user >/dev/null 2>&1; then
   warn "gh CLI not authenticated to an active account - skipping nixpkgs bump"
   warn "Run 'gh auth login' then retry: $0 --version $version"
-  exit 0
+  finish AUTH_GENERIC 21
+fi
+
+# NixOS enforces secure-2FA-only. If our GitHub account 2FA is non-compliant
+# (e.g. an SMS factor is configured), EVERY authenticated request to NixOS
+# resources 403s with a "two-factor authentication ... remove SMS" GraphQL error
+# - including READS, which silently blind `gh pr list` so the bump thinks no PR
+# exists. Probe one NixOS read up front and fail fast + LOUD (the launchd wrapper
+# alerts on AUTH_2FA) instead of wasting a build then dying at PR creation -
+# exactly how this sat unnoticed for days. Fix: remove the SMS factor from the
+# account (see ~/.claude/rules/services.md); authenticator TOTP is the anchor.
+nixos_probe=$(gh api "repos/$UPSTREAM" --jq .full_name 2>&1) || true
+if grep -qiE 'two-factor authentication|remove SMS' <<<"$nixos_probe"; then
+  warn "NixOS access blocked by GitHub 2FA-compliance: $nixos_probe"
+  warn "Remove the SMS 2FA factor from the Arthur-Ficial GitHub account, then retry."
+  finish AUTH_2FA 20
 fi
 
 # NOTE: there is deliberately NO "defer to r-ryantm" short-circuit here. For a
@@ -110,7 +138,7 @@ if ! gh repo view "$FORK" >/dev/null 2>&1; then
       if gh repo view "$FORK" >/dev/null 2>&1; then break; fi
       sleep 2
     done
-    gh repo view "$FORK" >/dev/null 2>&1 || { warn "fork did not appear after 40s"; exit 0; }
+    gh repo view "$FORK" >/dev/null 2>&1 || { warn "fork did not appear after 40s"; finish FORK_FAIL 25; }
   fi
 fi
 
@@ -160,7 +188,7 @@ if ! $dry_run; then
 
   if [[ "$old_version" == "$version" ]]; then
     info "nixpkgs already at $version - nothing to do"
-    exit 0
+    finish IN_SYNC 0
   fi
 
   # Advance a SINGLE bump PR instead of opening a new one per release. Find any
@@ -193,6 +221,17 @@ else:
     branch="apfel-llm-bump"
     info "No open bump PR - using stable branch $branch (old: $old_version, new: $version)..."
   fi
+  # If the reused PR already targets this version, the run has nothing to do but
+  # wait on a committer. Skip the expensive rebuild/push and report a benign
+  # PR_WAITING so the launchd wrapper stays quiet (no false "failure" alert).
+  if [[ -n "$keep_number" ]]; then
+    keep_title=$(gh pr view "$keep_number" --repo "$UPSTREAM" --json title --jq .title 2>/dev/null || true)
+    if [[ "$keep_title" == *"-> ${version}" ]]; then
+      info "Open PR #$keep_number already at $version - waiting on a committer to merge."
+      finish PR_WAITING 0 "pr=$keep_number"
+    fi
+  fi
+
   git checkout -B "$branch" --quiet
 
   info "Running scripts/bump-nixpkgs.sh..."
@@ -202,7 +241,7 @@ else:
 
   if git diff --quiet -- "$PACKAGE_PATH"; then
     info "package.nix unchanged after bump - skipping"
-    exit 0
+    finish IN_SYNC 0
   fi
 
   # --- Build-verify on this aarch64-darwin host (best practice; lets us check
@@ -216,7 +255,7 @@ else:
     else
       warn "nix-build FAILED - refusing to open a broken PR. See /tmp/apfel-nixpkgs-build.log"
       tail -15 /tmp/apfel-nixpkgs-build.log >&2
-      exit 1
+      finish BUILD_FAIL 22
     fi
   else
     warn "not on darwin - skipping build verification (PR body will not claim a darwin build)"
@@ -226,7 +265,11 @@ else:
   git add "$PACKAGE_PATH"
   git commit -m "$commit_msg" --quiet
   info "Pushing $branch to fork..."
-  git push origin "$branch" --force --quiet
+  set +e; push_out=$(git push origin "$branch" --force 2>&1); push_rc=$?; set -e
+  if [[ $push_rc -ne 0 ]]; then
+    grep -qiE 'two-factor authentication|remove SMS' <<<"$push_out" && { warn "push blocked by 2FA: $push_out"; finish AUTH_2FA 20; }
+    warn "git push failed: $push_out"; finish PUSH_FAIL 23
+  fi
 
   # --- Open or update PR ---
   pr_title="$commit_msg"
@@ -255,16 +298,26 @@ The version + SRI-hash bump is produced by a deterministic update script equival
 
   if [[ -n "$keep_number" ]]; then
     info "Updating PR #$keep_number to $version..."
-    gh pr edit "$keep_number" --repo "$UPSTREAM" --title "$pr_title" --body "$pr_body" >/dev/null
-    pr_url=$(gh pr view "$keep_number" --repo "$UPSTREAM" --json url --jq .url)
+    set +e; edit_out=$(gh pr edit "$keep_number" --repo "$UPSTREAM" --title "$pr_title" --body "$pr_body" 2>&1); edit_rc=$?; set -e
+    if [[ $edit_rc -ne 0 ]]; then
+      grep -qiE 'two-factor authentication|remove SMS' <<<"$edit_out" && { warn "PR edit blocked by 2FA: $edit_out"; finish AUTH_2FA 20; }
+      warn "gh pr edit failed: $edit_out"; finish PR_CREATE_FAIL 24
+    fi
+    pr_url=$(gh pr view "$keep_number" --repo "$UPSTREAM" --json url --jq .url 2>/dev/null || echo "(PR #$keep_number)")
+    pr_status=PR_ADVANCED
   else
     info "Opening PR on $UPSTREAM..."
-    pr_url=$(gh pr create \
+    set +e; pr_url=$(gh pr create \
       --repo "$UPSTREAM" \
       --base master \
       --head "Arthur-Ficial:${branch}" \
       --title "$pr_title" \
-      --body "$pr_body")
+      --body "$pr_body" 2>&1); create_rc=$?; set -e
+    if [[ $create_rc -ne 0 ]]; then
+      grep -qiE 'two-factor authentication|remove SMS' <<<"$pr_url" && { warn "PR create blocked by 2FA: $pr_url"; finish AUTH_2FA 20; }
+      warn "gh pr create failed: $pr_url"; finish PR_CREATE_FAIL 24
+    fi
+    pr_status=PR_OPENED
   fi
   info "PR: $pr_url"
 
@@ -279,6 +332,8 @@ The version + SRI-hash bump is produced by a deterministic update script equival
   fi
 else
   info "[dry-run] would: sync, branch, bump, commit, push, open PR for v$version"
+  finish DRY_RUN 0
 fi
 
 info "Done."
+finish "${pr_status:-PR_OPENED}" 0 "pr=${pr_url:-}"
