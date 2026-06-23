@@ -7,6 +7,8 @@ and this project adheres to [https://semver.org/](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-06-23
+
 ## [1.6.0] - 2026-06-14
 
 ### Added
