@@ -7,6 +7,10 @@ and this project adheres to [https://semver.org/](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A request that waits the full 30s for a concurrency permit no longer crashes the whole server with SIGABRT ("freed pointer was not the last allocation"); it now gets the intended 429. The semaphore timeout task no longer uses the clock-based `Task.sleep(for:)` (which aborted the task allocator on resume under the server executor) and is now stored on the actor and cancelled by `signal()` when a permit is handed over. `AsyncSemaphore` moved into `ApfelCore` for unit-test coverage (#214).
+
 ## [1.6.1] - 2026-06-23
 
 ### Added

@@ -111,6 +111,7 @@ suite("SamplingDecisionTests") { runSamplingDecisionTests() }
 suite("DemoInstallerTests") { runDemoInstallerTests() }
 suite("FileFramingTests") { runFileFramingTests() }
 suite("RedTDDTests") { runRedTDDTests() }
+suite("AsyncSemaphoreTests") { runAsyncSemaphoreTests() }
 
 // MARK: - Summary
 
