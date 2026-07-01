@@ -535,15 +535,17 @@ def test_mcp_health_endpoint(health_response):
 # ============================================================================
 
 def test_mcp_invalid_model_rejected():
-    """Invalid model name returns 400 with helpful error (only apple-foundationmodel accepted)."""
+    """Invalid model name returns 404 model_not_found (OpenAI parity, #236)."""
     resp = httpx.post(f"{API_URL}/chat/completions", json={
         "model": "gpt-4o",
         "messages": [{"role": "user", "content": "Say OK."}],
     }, timeout=TIMEOUT)
-    assert resp.status_code == 400
+    assert resp.status_code == 404
     data = resp.json()
     assert "does not exist" in data["error"]["message"]
     assert "apple-foundationmodel" in data["error"]["message"]
+    assert data["error"]["code"] == "model_not_found"
+    assert data["error"]["param"] == "model"
 
 
 def test_mcp_empty_messages_rejected():

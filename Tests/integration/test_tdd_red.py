@@ -374,18 +374,27 @@ def test_243_json_schema_number_allows_fractional():
         "required": ["price"],
         "additionalProperties": False,
     }
-    resp = _chat({
-        "model": MODEL,
-        "messages": [{"role": "user", "content": "The item costs nine dollars and ninety-nine cents. Return its price as a number."}],
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": "Priced", "schema": schema, "strict": True},
-        },
-    })
-    assert resp.status_code == 200, f"number json_schema should succeed, got {resp.status_code}: {resp.text}"
-    data = json.loads(resp.json()["choices"][0]["message"]["content"])
-    assert isinstance(data["price"], float), (
-        f"a JSON Schema 'number' must permit a fractional value, got {data['price']!r} "
-        "(type mapped to Int would round to a whole number)")
-    assert data["price"] != int(data["price"]), (
-        f"expected a fractional price (e.g. 9.99), got a whole number {data['price']!r}")
+    # The fix makes fractional values POSSIBLE; the model is not forced to
+    # emit one on any single sample. Ask for an exact fractional price and
+    # allow a few attempts so scheduler/sampling noise cannot flake a release
+    # run (#264 discipline) - with the old Int mapping every attempt returns a
+    # whole number, so the loop still fails deterministically pre-fix.
+    last_price = None
+    for _ in range(3):
+        resp = _chat({
+            "model": MODEL,
+            "messages": [{"role": "user", "content": "The price is exactly 9.99 dollars. Return the price."}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "Priced", "schema": schema, "strict": True},
+            },
+        })
+        assert resp.status_code == 200, f"number json_schema should succeed, got {resp.status_code}: {resp.text}"
+        data = json.loads(resp.json()["choices"][0]["message"]["content"])
+        last_price = data["price"]
+        if isinstance(last_price, float) and last_price != int(last_price):
+            return
+    raise AssertionError(
+        f"a JSON Schema 'number' must permit a fractional value; 3 attempts all "
+        f"returned whole numbers, last was {last_price!r} (Int mapping would make "
+        "fractions unreachable)")

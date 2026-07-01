@@ -399,7 +399,16 @@ def test_streaming_tool_call_chunks_include_indexed_deltas():
         validate(instance=chunk, schema=CHAT_COMPLETION_CHUNK_SCHEMA)
         for call in chunk["choices"][0]["delta"]["tool_calls"]:
             assert isinstance(call["index"], int)
-    assert tool_call_chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"
+        # OpenAI parity (#224): tool_calls deltas never carry finish_reason.
+        assert chunk["choices"][0].get("finish_reason") is None
+    # finish_reason arrives in a separate trailing chunk with an empty delta.
+    finish_chunks = [
+        chunk for chunk in chunks
+        if chunk.get("choices") and chunk["choices"][0].get("finish_reason") == "tool_calls"
+    ]
+    assert finish_chunks, "Expected a separate chunk carrying finish_reason tool_calls"
+    finish_delta = finish_chunks[-1]["choices"][0].get("delta", {})
+    assert not finish_delta.get("content") and not finish_delta.get("tool_calls")
 
 
 # ============================================================================
