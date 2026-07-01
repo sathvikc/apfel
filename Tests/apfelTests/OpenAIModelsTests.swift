@@ -344,6 +344,28 @@ func runChatRequestValidatorTests() {
         try assertNil(ChatRequestValidator.validate(request))
     }
 
+    test("validator rejects unknown x_context_strategy listing valid values (#237)") {
+        let request = try decode(
+            ChatCompletionRequest.self,
+            from: #"{"model":"\#(M)","messages":[{"role":"user","content":"hi"}],"x_context_strategy":"sliding-window-typo"}"#
+        )
+        guard case .invalidParameterValue(let detail) = ChatRequestValidator.validate(request) else {
+            throw TestFailure("expected .invalidParameterValue for unknown x_context_strategy")
+        }
+        try assertTrue(detail.contains("newest-first"))
+        try assertTrue(detail.contains("sliding-window-typo"))
+    }
+
+    test("validator accepts every valid x_context_strategy (#237)") {
+        for strategy in ContextStrategy.allCases {
+            let request = try decode(
+                ChatCompletionRequest.self,
+                from: #"{"model":"\#(M)","messages":[{"role":"user","content":"hi"}],"x_context_strategy":"\#(strategy.rawValue)"}"#
+            )
+            try assertNil(ChatRequestValidator.validate(request))
+        }
+    }
+
     test("validator rejects x_context_max_turns <= 0") {
         let request = try decode(
             ChatCompletionRequest.self,

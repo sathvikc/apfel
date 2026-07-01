@@ -106,3 +106,19 @@ def test_error_object_always_has_null_param_and_code_when_absent():
     err = _assert_openai_error(resp, expected_type="invalid_request_error")
     assert err["param"] is None, err
     assert err["code"] is None, err
+
+
+# ============================================================================
+# #237 - unknown x_context_strategy
+# ============================================================================
+
+def test_unknown_context_strategy_returns_400_listing_valid_values():
+    payload = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": "hi"}],
+        "x_context_strategy": "sliding-window-typo",
+    }
+    resp = _post(payload)
+    assert resp.status_code == 400, resp.text
+    err = _assert_openai_error(resp, expected_type="invalid_request_error")
+    assert "newest-first" in err["message"], err

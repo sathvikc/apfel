@@ -215,6 +215,10 @@ public enum ChatRequestValidator {
         if let seed = request.seed, seed < 0 {
             return .invalidParameterValue("'seed' must be a non-negative integer, got \(seed)")
         }
+        if let strategy = request.x_context_strategy, ContextStrategy(rawValue: strategy) == nil {
+            let valid = ContextStrategy.allCases.map(\.rawValue).joined(separator: ", ")
+            return .invalidParameterValue("'x_context_strategy' must be one of: \(valid). Got '\(strategy)'.")
+        }
         if let turns = request.x_context_max_turns, turns <= 0 {
             return .invalidParameterValue("'x_context_max_turns' must be a positive integer, got \(turns)")
         }
